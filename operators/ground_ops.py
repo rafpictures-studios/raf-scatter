@@ -18,16 +18,9 @@ class SCATTER_OT_add_ground_popup(Operator):
         wm = context.window_manager
         return wm.invoke_search_popup(self)
 
-    def draw(self, context):
-        layout = self.layout
-        layout.label(text="Target Ground")
-        layout.separator(factor=0.5)
-        layout.prop(self, "ground_object", text="")
-
     def execute(self, context):
         if self.ground_object:
             scene = context.scene
-            scene.scatter_ground_picker_temp = self.ground_object
             
             ground = scene.scatter_grounds.add()
             ground.name = self.ground_object.name
@@ -35,7 +28,6 @@ class SCATTER_OT_add_ground_popup(Operator):
             
             scene.scatter_grounds.move(len(scene.scatter_grounds) - 1, 0)
             scene.active_ground_index = 0
-            scene.scatter_ground_picker_temp = None
             
             for window in context.window_manager.windows:
                 for area in window.screen.areas:
