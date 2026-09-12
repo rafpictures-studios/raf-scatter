@@ -60,7 +60,7 @@ class SCATTER_PT_main(Panel):
         if len(scene.scatter_grounds) == 0:
             row = layout.row()
             row.scale_y = 1.4
-            row.operator("scatter.add_ground_popup", text="Add Ground", icon='ADD')
+            op = row.operator("scatter.add_ground_popup", text="Add Ground", icon='ADD')
             return
 
         idx = scene.active_ground_index
@@ -68,7 +68,7 @@ class SCATTER_PT_main(Panel):
 
         row = layout.row(align=True)
         row.menu("SCATTER_MT_grounds", text=active_name, icon='OUTLINER_OB_MESH')
-        row.operator("scatter.add_ground_popup", text="", icon='ADD')
+        op = row.operator("scatter.add_ground_popup", text="", icon='ADD')
         row.operator("scatter.delete_ground", text="", icon='TRASH')
 
     def draw_systems_section(self, layout, ground):

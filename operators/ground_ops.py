@@ -1,37 +1,44 @@
 import bpy
 from bpy.types import Operator
-from bpy.props import IntProperty
+from bpy.props import IntProperty, PointerProperty
 
 
 class SCATTER_OT_add_ground_popup(Operator):
     bl_idname = "scatter.add_ground_popup"
     bl_label = "Target Ground"
+    bl_property = "ground_object"
+
+    ground_object: PointerProperty(
+        name="Ground",
+        type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == 'MESH'
+    )
 
     def invoke(self, context, event):
-        context.scene.scatter_ground_picker_temp = None
-        return context.window_manager.invoke_popup(self, width=260)
+        wm = context.window_manager
+        return wm.invoke_search_popup(self)
 
     def draw(self, context):
         layout = self.layout
-        scene = context.scene
-
         layout.label(text="Target Ground")
         layout.separator(factor=0.5)
-        layout.prop(scene, "scatter_ground_picker_temp", text="")
-
+        layout.prop(self, "ground_object", text="")
         row = layout.row(align=True)
         row.scale_y = 1.2
         row.operator("scatter.confirm_add_ground", text="Add", icon='CHECKMARK')
         row.operator("scatter.cancel_add_ground", text="Cancel", icon='X')
 
     def execute(self, context):
+        if self.ground_object:
+            context.scene.scatter_ground_picker_temp = self.ground_object
+            bpy.ops.scatter.confirm_add_ground('INVOKE_DEFAULT')
         return {'FINISHED'}
 
 
 class SCATTER_OT_confirm_add_ground(Operator):
     bl_idname = "scatter.confirm_add_ground"
     bl_label = "Add this object as ground"
-    bl_options = {'INTERNAL'}
+    bl_options = {'INTERNAL', 'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
@@ -48,6 +55,11 @@ class SCATTER_OT_confirm_add_ground(Operator):
         scene.scatter_grounds.move(len(scene.scatter_grounds) - 1, 0)
         scene.active_ground_index = 0
         scene.scatter_ground_picker_temp = None
+        
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                area.tag_redraw()
+        
         return {'FINISHED'}
 
 
@@ -58,7 +70,7 @@ class SCATTER_OT_cancel_add_ground(Operator):
 
     def execute(self, context):
         context.scene.scatter_ground_picker_temp = None
-        return {'FINISHED'}
+        return {'CANCELLED'}
 
 
 class SCATTER_OT_set_active_ground(Operator):
@@ -98,6 +110,11 @@ class SCATTER_OT_delete_ground(Operator):
 
         scene.scatter_grounds.remove(idx)
         scene.active_ground_index = max(0, idx - 1)
+        
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
+                area.tag_redraw()
+        
         return {'FINISHED'}
 
 
