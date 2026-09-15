@@ -1,16 +1,6 @@
 from bpy.types import Menu
 
-
-class SCATTER_MT_add_system(Menu):
-    bl_idname = "SCATTER_MT_add_system"
-    bl_label = "Add scatter system"
-
-    def draw(self, context):
-        layout = self.layout
-        op = layout.operator("scatter.add_system", text="Manual", icon='BRUSH_DATA')
-        op.system_type = 'MANUAL'
-        op = layout.operator("scatter.add_system", text="Procedural", icon='MOD_PARTICLES')
-        op.system_type = 'PROCEDURAL'
+from ..operators.system_ops import SYSTEM_TYPE_ITEMS
 
 
 class SCATTER_MT_grounds(Menu):
@@ -26,7 +16,18 @@ class SCATTER_MT_grounds(Menu):
             op.index = index
 
 
+class SCATTER_MT_add_system_type(Menu):
+    bl_idname = "SCATTER_MT_add_system_type"
+    bl_label = "Add Scatter System"
+
+    def draw(self, context):
+        layout = self.layout
+        for identifier, name, description, icon, index in SYSTEM_TYPE_ITEMS:
+            op = layout.operator("scatter.add_system", text=name, icon=icon)
+            op.system_type = identifier
+
+
 classes = (
-    SCATTER_MT_add_system,
     SCATTER_MT_grounds,
+    SCATTER_MT_add_system_type,
 )

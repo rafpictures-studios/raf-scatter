@@ -1,27 +1,48 @@
 """
 utils/icons.py — Custom icon loader (preview collection).
 
-Placeholder for future custom icon swapping (guide section 2, "Heavy
-Customization Ready"). Not used anywhere yet; ui/panels.py currently
-relies entirely on built-in Blender icons, already verified against the
-icon enum (guide Rule E).
-
-IMPORTANT: once this file is actually used, never pass a custom icon
-path as an 'icon=...' string directly — that argument only accepts the
-built-in icon enum. Custom icons must go through
-pcoll["icon_name"].icon_id via template_icon / layout.label(icon_value=...).
+Loads effector, scatter-system, and brush thumbnail PNGs from
+resources/thumbnails/ into a preview collection, exposed via
+get_icon_id(name) for use with icon_value=... in UI draw calls.
 """
 
+import os
 import bpy.utils.previews
 
 _icon_collections = {}
 
+_THUMBNAIL_NAMES = (
+    "texture_mask",
+    "proximity_mask",
+    "position_mask",
+    "slope_mask",
+    "vertex_mask",
+    "manual_scatter",
+    "procedural_scatter",
+    "brush_line",
+    "brush_density",
+    "brush_delete",
+    "brush_slide",
+)
+
 
 def register():
     pcoll = bpy.utils.previews.new()
-    # TODO: load actual .png/.svg icons from resources/icons/, e.g.:
-    # icons_dir = os.path.join(os.path.dirname(__file__), "..", "resources", "icons")
-    # pcoll.load("my_icon", os.path.join(icons_dir, "my_icon.png"), 'IMAGE')
+
+    thumbnails_dir = os.path.join(os.path.dirname(__file__), "..", "resources", "thumbnails")
+    missing = []
+    for name in _THUMBNAIL_NAMES:
+        filepath = os.path.join(thumbnails_dir, f"{name}.png")
+        if os.path.isfile(filepath):
+            pcoll.load(name, filepath, 'IMAGE')
+        else:
+            missing.append(filepath)
+
+    if missing:
+        print("[RAF Scatter] Thumbnail file(s) not found, falling back to built-in icons:")
+        for path in missing:
+            print(f"  - {path}")
+
     _icon_collections["main"] = pcoll
 
 
@@ -32,9 +53,8 @@ def unregister():
 
 
 def get_icon_id(name):
-    """Return the icon_id int for use in layout.label(icon_value=...).
-    Returns None if the icon hasn't been loaded (no custom icons exist
-    yet at this point)."""
+    """Return the icon_id int for use with icon_value=... in UI draw
+    calls. Returns None if the thumbnail wasn't loaded (missing file)."""
     pcoll = _icon_collections.get("main")
     if pcoll is None or name not in pcoll:
         return None
