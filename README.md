@@ -19,7 +19,7 @@ Ecosystem scattering toolkit for Blender. Paint plants, rocks and any other asse
 
 ## Installation
 
-1. Download this repository as a `.zip` (or a release zip). Do not unzip it.
+1. Download `raf_scatter.zip` from [Releases](https://github.com/rafpictures-studios/raf-scatter/releases). Do not unzip it. (GitHub's green **Code > Download ZIP** button is not an installable add-on.)
 2. In Blender: **Edit > Preferences > Add-ons**, open the drop-down at the top right, choose **Install from Disk…** and select the zip.
 3. Enable **RAF Scatter**.
 4. In the 3D Viewport press **N** and open the **RAF Scatter** tab.
