@@ -6,13 +6,13 @@ from ..utils import icons as icon_utils
 
 
 #----SOCKET ROWS----
-def _draw_socket_row(col, modifier, socket_name, prop_path):
+def _draw_socket_row(col, modifier, socket_name, prop_ref):
     """Draw a socket field; Seed sockets get an icon-only random seed button."""
     if socket_name != "Seed":
-        col.prop(modifier, prop_path, text=socket_name)
+        col.prop(*prop_ref, text=socket_name)
         return
     row = col.row(align=True)
-    row.prop(modifier, prop_path, text=socket_name)
+    row.prop(*prop_ref, text=socket_name)
     seed_icon = icon_utils.get_menu_icon_id("seed")
     if seed_icon:
         op = row.operator("scatter.randomize_seed", text="", icon_value=seed_icon)
@@ -160,18 +160,18 @@ class SCATTER_PT_main(Panel):
         for socket_name in (
             "Seed", "Scale Min", "Scale Max", "Random Rotation", "Translation", "Local Space",
         ):
-            prop_path = geonodes_utils.get_modifier_input_path(instances_modifier, socket_name)
-            if prop_path is None:
+            prop_ref = geonodes_utils.get_modifier_input_prop(instances_modifier, socket_name)
+            if prop_ref is None:
                 col2.label(text=f"{socket_name} socket not found")
             else:
-                _draw_socket_row(col2, instances_modifier, socket_name, prop_path)
+                _draw_socket_row(col2, instances_modifier, socket_name, prop_ref)
         if len(system.effectors) > 0:
             for socket_name in ("Edge Falloff", "Falloff"):
-                prop_path = geonodes_utils.get_modifier_input_path(instances_modifier, socket_name)
-                if prop_path is None:
+                prop_ref = geonodes_utils.get_modifier_input_prop(instances_modifier, socket_name)
+                if prop_ref is None:
                     col2.label(text=f"{socket_name} socket not found")
                     continue
-                col2.prop(instances_modifier, prop_path, text=socket_name)
+                col2.prop(*prop_ref, text=socket_name)
 
     def draw_procedural_controls(self, layout, system):
         modifier = geonodes_utils.get_procedural_modifier(system)
@@ -182,11 +182,11 @@ class SCATTER_PT_main(Panel):
         col.use_property_split = True
         col.use_property_decorate = False
         for socket_name in ("Density", "Distance Min", "Seed"):
-            prop_path = geonodes_utils.get_modifier_input_path(modifier, socket_name)
-            if prop_path is None:
+            prop_ref = geonodes_utils.get_modifier_input_prop(modifier, socket_name)
+            if prop_ref is None:
                 col.label(text=f"{socket_name} socket not found")
             else:
-                _draw_socket_row(col, modifier, socket_name, prop_path)
+                _draw_socket_row(col, modifier, socket_name, prop_ref)
         layout.separator(factor=0.5)
         instances_modifier = geonodes_utils.get_instances_modifier(system)
         if instances_modifier is None:
@@ -219,18 +219,18 @@ class SCATTER_PT_main(Panel):
             "Align Surface", "Scale Min", "Scale Max", "Random Rotation", "Translation",
             "Local Space",
         ):
-            prop_path = geonodes_utils.get_modifier_input_path(instances_modifier, socket_name)
-            if prop_path is None:
+            prop_ref = geonodes_utils.get_modifier_input_prop(instances_modifier, socket_name)
+            if prop_ref is None:
                 col2.label(text=f"{socket_name} socket not found")
                 continue
-            col2.prop(instances_modifier, prop_path, text=socket_name)
+            col2.prop(*prop_ref, text=socket_name)
         if len(system.effectors) > 0:
             for socket_name in ("Edge Falloff", "Falloff"):
-                prop_path = geonodes_utils.get_modifier_input_path(instances_modifier, socket_name)
-                if prop_path is None:
+                prop_ref = geonodes_utils.get_modifier_input_prop(instances_modifier, socket_name)
+                if prop_ref is None:
                     col2.label(text=f"{socket_name} socket not found")
                     continue
-                col2.prop(instances_modifier, prop_path, text=socket_name)
+                col2.prop(*prop_ref, text=socket_name)
 
     def draw_effectors(self, layout, system):
         box = layout.box()
@@ -291,15 +291,15 @@ class SCATTER_PT_main(Panel):
                     continue
                 if socket.name not in visible_sockets:
                     continue
-                prop_path = geonodes_utils.get_modifier_input_path(modifier, socket.name)
-                if prop_path is None:
+                prop_ref = geonodes_utils.get_modifier_input_prop(modifier, socket.name)
+                if prop_ref is None:
                     continue
                 if socket.name == "Image":
                     img_row = col.row(align=True)
-                    img_row.prop(modifier, prop_path, text="Image")
+                    img_row.prop(*prop_ref, text="Image")
                     img_row.operator("scatter.open_mask_image", text="", icon='FILE_FOLDER')
                 else:
-                    _draw_socket_row(col, modifier, socket.name, prop_path)
+                    _draw_socket_row(col, modifier, socket.name, prop_ref)
 
     def _draw_proximity_controls(self, col, system, effector, modifier):
         """Draw proximity source pickers and the shared mask controls."""
@@ -322,11 +322,11 @@ class SCATTER_PT_main(Panel):
             icon='MOD_NOISE', depress=edge_blend_on,
         )
         if edge_blend_on:
-            mode_prop_path = geonodes_utils.get_modifier_input_path(modifier, "Mode")
-            if mode_prop_path is None:
+            mode_prop_ref = geonodes_utils.get_modifier_input_prop(modifier, "Mode")
+            if mode_prop_ref is None:
                 col.label(text="Mode socket not found")
             else:
-                col.prop(modifier, mode_prop_path, text="Mode")
+                col.prop(*mode_prop_ref, text="Mode")
             self._draw_socket_set(col, modifier, geonodes_utils.PROXIMITY_EDGE_BLEND_SOCKETS)
 
     def _draw_vertex_controls(self, col, system, effector, modifier):
@@ -363,11 +363,11 @@ class SCATTER_PT_main(Panel):
             icon='MOD_NOISE', depress=edge_blend_on,
         )
         if edge_blend_on:
-            mode_prop_path = geonodes_utils.get_modifier_input_path(modifier, "Mode")
-            if mode_prop_path is None:
+            mode_prop_ref = geonodes_utils.get_modifier_input_prop(modifier, "Mode")
+            if mode_prop_ref is None:
                 col.label(text="Mode socket not found")
             else:
-                col.prop(modifier, mode_prop_path, text="Mode")
+                col.prop(*mode_prop_ref, text="Mode")
             self._draw_socket_set(col, modifier, geonodes_utils.VERTEX_EDGE_BLEND_SOCKETS)
 
     def _draw_grouped_mask_controls(self, col, modifier, group_label, base_sockets, edge_sockets):
@@ -384,11 +384,11 @@ class SCATTER_PT_main(Panel):
             icon='MOD_NOISE', depress=edge_blend_on,
         )
         if edge_blend_on:
-            mode_prop_path = geonodes_utils.get_modifier_input_path(modifier, "Mode")
-            if mode_prop_path is None:
+            mode_prop_ref = geonodes_utils.get_modifier_input_prop(modifier, "Mode")
+            if mode_prop_ref is None:
                 col.label(text="Mode socket not found")
             else:
-                col.prop(modifier, mode_prop_path, text="Mode")
+                col.prop(*mode_prop_ref, text="Mode")
             self._draw_socket_set(col, modifier, edge_sockets)
 
     @staticmethod
@@ -398,10 +398,10 @@ class SCATTER_PT_main(Panel):
                 continue
             if socket.name not in names:
                 continue
-            prop_path = geonodes_utils.get_modifier_input_path(modifier, socket.name)
-            if prop_path is None:
+            prop_ref = geonodes_utils.get_modifier_input_prop(modifier, socket.name)
+            if prop_ref is None:
                 continue
-            _draw_socket_row(col, modifier, socket.name, prop_path)
+            _draw_socket_row(col, modifier, socket.name, prop_ref)
 
 
 classes = (

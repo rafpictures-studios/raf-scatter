@@ -21,7 +21,8 @@ _NORMAL_LENGTH_FACTOR = 0.35
 _SURFACE_LIFT_FACTOR = 0.002
 _MIN_RADIUS_PX = 1.0
 _DEFAULT_RADIUS_PX = 75.0
-_BRUSH_SIZE_TO_RADIUS = 0.5  # brush size is a diameter
+# brush size became a diameter in Blender 5.0; before it was the radius
+_BRUSH_SIZE_TO_RADIUS = 0.5 if bpy.app.version >= (5, 0, 0) else 1.0
 _RADIUS_REFRESH_INTERVAL = 0.03
 _RADIUS_EPSILON_PX = 0.01
 
@@ -70,7 +71,10 @@ def _get_brush_radius_px(scene):
     if paint is None:
         return None
     brush = paint.brush
+    # unified settings live on each paint mode since 5.0, on the tool settings before
     unified = getattr(paint, "unified_paint_settings", None)
+    if unified is None:
+        unified = getattr(scene.tool_settings, "unified_paint_settings", None)
     use_unified = getattr(unified, "use_unified_size", None)
     if use_unified is None:
         use_unified = getattr(brush, "use_unified_size", False)

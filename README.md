@@ -17,7 +17,7 @@
 
 ## Install
 
-Requires **Blender 5.0+** (tested on 5.0 and 5.1).
+Requires **Blender 4.5+** (tested on 4.5 LTS, 5.0, 5.1 and 5.2 LTS).
 
 1. Download `raf_scatter.zip` from [Releases](https://github.com/rafpictures-studios/raf-scatter/releases/latest). Do not unzip it.
 2. **Edit > Preferences > Add-ons** → drop-down at the top right → **Install from Disk…** → select the zip.

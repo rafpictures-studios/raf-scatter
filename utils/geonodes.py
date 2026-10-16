@@ -44,6 +44,9 @@ VERTEX_EDGE_BLEND_SOCKETS = set(_EDGE_BLEND_SOCKETS)
 _UNBOUNDED_SEED_SPAN = 1_000_000
 _UNBOUNDED_INT_SEED_RANGE = (0, 10000)
 _FLOAT_SEED_LIMIT = 1000.0
+# Blender 5.2 moved Geometry Nodes modifier inputs from ID properties to per-socket structs
+USES_INPUT_STRUCTS = "properties" in bpy.types.NodesModifier.bl_rna.properties
+_INPUT_STRUCT_FIELDS = ("type", "attribute_name", "layer_name", "value")
 
 
 #----APPEND LOAD----
@@ -246,14 +249,90 @@ def get_effector_modifier(system, effector):
     return system.curve_obj.modifiers.get(effector.modifier_name)
 
 
-def get_modifier_input_path(modifier, socket_name):
-    """RNA path of the modifier key backing a socket, or None."""
+#----SOCKET VALUE STORAGE----
+def _input_struct(modifier, socket):
+    """Return the per-socket input struct of a modifier (Blender 5.2+), or None."""
+    return getattr(modifier.properties.inputs, socket.identifier, None)
+
+
+def _menu_enum_items(struct):
+    return struct.bl_rna.properties["value"].enum_items
+
+
+def _has_input(modifier, socket):
+    if USES_INPUT_STRUCTS:
+        return _input_struct(modifier, socket) is not None
+    return socket.identifier in modifier
+
+
+def read_socket_value(modifier, socket, fallback=None):
+    """Read the modifier value of an interface socket; Menu sockets give their item id."""
+    if not USES_INPUT_STRUCTS:
+        return modifier.get(socket.identifier, fallback)
+    struct = _input_struct(modifier, socket)
+    if struct is None or not hasattr(struct, "value"):
+        return fallback
+    value = struct.value
+    if socket.socket_type == 'NodeSocketMenu':
+        items = _menu_enum_items(struct)
+        return items[value].value if value in items else fallback
+    if hasattr(value, "__len__") and not isinstance(value, str):
+        return list(value)
+    return value
+
+
+def _write_socket_value(modifier, socket, value):
+    """Write a modifier socket value; Menu sockets take their item id. Return success."""
+    if not USES_INPUT_STRUCTS:
+        try:
+            modifier[socket.identifier] = value
+        except TypeError:
+            del modifier[socket.identifier]
+            modifier[socket.identifier] = value
+        return True
+    struct = _input_struct(modifier, socket)
+    if struct is None or not hasattr(struct, "value"):
+        return False
+    if socket.socket_type == 'NodeSocketMenu' and isinstance(value, int):
+        names = [item.identifier for item in _menu_enum_items(struct) if item.value == value]
+        if not names:
+            return False
+        value = names[0]
+    try:
+        struct.value = value
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return True
+
+
+def _copy_input_structs(source, target):
+    """Copy every input value, mode and attribute name between two modifiers (5.2+)."""
+    for socket in source.node_group.interface.items_tree:
+        if socket.item_type != 'SOCKET' or socket.in_out != 'INPUT':
+            continue
+        src, dst = _input_struct(source, socket), _input_struct(target, socket)
+        if src is None or dst is None:
+            continue
+        for field in _INPUT_STRUCT_FIELDS:
+            if hasattr(src, field):
+                try:
+                    setattr(dst, field, getattr(src, field))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+
+
+#----SOCKET ACCESS----
+def get_modifier_input_prop(modifier, socket_name):
+    """Return (owner, property path) to draw a socket with layout.prop, or None."""
     if modifier is None or modifier.node_group is None:
         return None
     socket = find_input_socket(modifier.node_group, socket_name)
-    if socket is None or socket.identifier not in modifier:
+    if socket is None or not _has_input(modifier, socket):
         return None
-    return f'["{socket.identifier}"]'
+    if USES_INPUT_STRUCTS:
+        struct = _input_struct(modifier, socket)
+        return (struct, "value") if hasattr(struct, "value") else None
+    return modifier, f'["{socket.identifier}"]'
 
 
 def get_modifier_input_value(modifier, socket_name, fallback=None):
@@ -263,7 +342,7 @@ def get_modifier_input_value(modifier, socket_name, fallback=None):
     socket = find_input_socket(modifier.node_group, socket_name)
     if socket is None:
         return fallback
-    return modifier.get(socket.identifier, fallback)
+    return read_socket_value(modifier, socket, fallback)
 
 
 def get_menu_socket_items(modifier, socket_name):
@@ -271,8 +350,10 @@ def get_menu_socket_items(modifier, socket_name):
     if modifier is None or modifier.node_group is None:
         return {}
     socket = find_input_socket(modifier.node_group, socket_name)
-    if socket is None or socket.identifier not in modifier:
+    if socket is None or not _has_input(modifier, socket):
         return {}
+    if USES_INPUT_STRUCTS:
+        return {item.name: item.value for item in _menu_enum_items(_input_struct(modifier, socket))}
     try:
         items = modifier.id_properties_ui(socket.identifier).as_dict().get("items", ())
     except (TypeError, KeyError):
@@ -294,13 +375,8 @@ def set_modifier_input_value(modifier, socket_name, value):
     if modifier is None or modifier.node_group is None:
         return False
     socket = find_input_socket(modifier.node_group, socket_name)
-    if socket is None:
+    if socket is None or not _write_socket_value(modifier, socket, value):
         return False
-    try:
-        modifier[socket.identifier] = value
-    except TypeError:
-        del modifier[socket.identifier]
-        modifier[socket.identifier] = value
     modifier.id_data.update_tag()
     # visibility toggle forces the modifier to re-evaluate
     enabled = modifier.show_viewport
@@ -311,7 +387,8 @@ def set_modifier_input_value(modifier, socket_name, value):
 
 def ensure_modifier_socket_defaults(modifier):
     """Materialize missing socket keys from node group defaults."""
-    if modifier is None or modifier.node_group is None:
+    # Blender 5.2+ creates every input with its default already
+    if modifier is None or modifier.node_group is None or USES_INPUT_STRUCTS:
         return
     for item in modifier.node_group.interface.items_tree:
         if item.item_type != 'SOCKET' or item.in_out != 'INPUT':
@@ -365,11 +442,11 @@ def _wire_texture_uv(modifier, target_ground):
     if socket is None or target_ground is None:
         return
     if socket.socket_type == 'NodeSocketObject':
-        modifier[socket.identifier] = target_ground
+        _write_socket_value(modifier, socket, target_ground)
     elif socket.socket_type == 'NodeSocketString':
         uv_layers = target_ground.data.uv_layers
         if uv_layers.active is not None:
-            modifier[socket.identifier] = uv_layers.active.name
+            _write_socket_value(modifier, socket, uv_layers.active.name)
 
 
 def _wire_vertex_ground(modifier, target_ground):
@@ -378,7 +455,7 @@ def _wire_vertex_ground(modifier, target_ground):
         return
     socket = find_input_socket(modifier.node_group, "Target Ground")
     if socket is not None:
-        modifier[socket.identifier] = target_ground
+        _write_socket_value(modifier, socket, target_ground)
 
 
 def get_effector_node_group(effector_type):
@@ -421,8 +498,11 @@ def duplicate_effector_modifier(curve_obj, modifier):
     """Copy an effector modifier with all socket values to the top of the effector block."""
     new_modifier = curve_obj.modifiers.new(name=modifier.name, type='NODES')
     new_modifier.node_group = modifier.node_group
-    for key in modifier.keys():
-        new_modifier[key] = modifier[key]
+    if USES_INPUT_STRUCTS:
+        _copy_input_structs(modifier, new_modifier)
+    else:
+        for key in modifier.keys():
+            new_modifier[key] = modifier[key]
     ensure_modifier_socket_defaults(new_modifier)
     _move_modifier(
         curve_obj, new_modifier,
@@ -557,7 +637,7 @@ def setup_system_modifier_stack(curve_obj, system_type, target_ground):
     ensure_modifier_socket_defaults(modifier)
     target_socket = _find_socket(node_group, "Target Ground")
     if target_socket is not None:
-        modifier[target_socket.identifier] = target_ground
+        _write_socket_value(modifier, target_socket, target_ground)
     return modifier
 
 

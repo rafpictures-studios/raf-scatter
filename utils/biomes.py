@@ -275,6 +275,8 @@ def delete_biome(name):
 def _to_json_value(value):
     if hasattr(value, "to_list"):
         return value.to_list()
+    if isinstance(value, list):
+        return value
     if isinstance(value, (bool, int, float, str)):
         return value
     return None
@@ -288,7 +290,7 @@ def _serialize_sockets(modifier, skip):
     for item in modifier.node_group.interface.items_tree:
         if item.item_type != 'SOCKET' or item.in_out != 'INPUT' or item.name in skip:
             continue
-        value = _to_json_value(modifier.get(item.identifier))
+        value = _to_json_value(geonodes_utils.read_socket_value(modifier, item))
         if value is not None:
             sockets[item.name] = value
     return sockets
