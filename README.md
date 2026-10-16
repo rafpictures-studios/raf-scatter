@@ -1,32 +1,30 @@
 # RAF Scatter
 
-Ecosystem scattering toolkit for Blender. Paint plants, rocks and any other asset onto a ground by hand, or distribute them procedurally, then shape the result with masks. Save whole setups as **biomes** and share them as **biome packs** that carry their own assets.
+**Ecosystem scattering toolkit for Blender.** Paint plants, rocks and any other asset onto a ground by hand, or let RAF Scatter distribute them procedurally — then shape the result with masks, save the whole setup as a biome, and share it as a biome pack.
 
-**Documentation:** https://raf-scatter-docs.vercel.app/
+![Painting a scatter with RAF Scatter](media/painting-session.gif)
 
-## Features
+**[Download](https://github.com/rafpictures-studios/raf-scatter/releases/latest)** · **[Documentation](https://raf-scatter-docs.vercel.app/)**
 
-- **Paint Mode** — paint scatter by hand with five brushes (Add, Density, Grow, Delete, Slide), a flat ring cursor and an on-screen HUD.
+## Overview
+
+- **Paint Mode** — five scatter brushes (Add, Density, Grow, Delete, Slide) with a ground-hugging ring cursor and an on-screen HUD.
 - **Procedural Mode** — automatic distribution with Density, Distance Min and Seed.
-- **Instances** from any object or collection, with random scale, rotation and offset, plus Asset Browser import.
-- **Masks** — Texture, Position, Slope, Proximity and Vertex Group, each with optional Edge Blend; multi-select, copy and paste.
-- **Biomes** (`.rafbiome`) — save every scatter system of a ground as one preset with a thumbnail and load it onto any ground.
-- **Biome Packs** (`.rafpack`) — export biomes with all their meshes, materials and textures into one file; install packs in one click.
+- **Instances** — any object or collection, with random scale, rotation and offset; import straight from the Asset Browser.
+- **Masks** — Texture, Position, Slope, Proximity and Vertex Group, each with optional Edge Blend.
+- **Biomes** — save every scatter system of a ground as one preset and load it onto any other ground.
+- **Biome Packs** (`.rafpack`) — bundle biomes with all their meshes, materials and textures into one file you can share or sell.
 
-## Requirements
+## Install
 
-- Blender 5.0 or newer (tested on 5.0 and 5.1). Blender 5.2 is not supported yet.
+Requires **Blender 5.0+** (tested on 5.0 and 5.1).
 
-## Installation
+1. Download `raf_scatter.zip` from [Releases](https://github.com/rafpictures-studios/raf-scatter/releases/latest). Do not unzip it.
+2. **Edit > Preferences > Add-ons** → drop-down at the top right → **Install from Disk…** → select the zip.
+3. Enable **RAF Scatter**, then press **N** in the 3D Viewport and open the **RAF Scatter** tab.
 
-1. Download `raf_scatter.zip` from [Releases](https://github.com/rafpictures-studios/raf-scatter/releases). Do not unzip it. (GitHub's green **Code > Download ZIP** button is not an installable add-on.)
-2. In Blender: **Edit > Preferences > Add-ons**, open the drop-down at the top right, choose **Install from Disk…** and select the zip.
-3. Enable **RAF Scatter**.
-4. In the 3D Viewport press **N** and open the **RAF Scatter** tab.
-
-See the [Quick Start](https://raf-scatter-docs.vercel.app/) in the documentation for the first steps.
+> GitHub's green **Code > Download ZIP** button is not an installable add-on — use the release zip.
 
 ## Author
 
-Rizki Alfajri — RAF Pictures
-[Instagram](https://www.instagram.com/rizqyalfajri/) · [YouTube](https://www.youtube.com/@rafpictures_studios)
+Rizki Alfajri — RAF Pictures · [Instagram](https://www.instagram.com/rizqyalfajri/) · [YouTube](https://www.youtube.com/@rafpictures_studios)
