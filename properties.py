@@ -248,8 +248,11 @@ def _on_system_name_update(self, context):
 
 
 def _sync_curve_renames(scene, depsgraph):
-    """Sync outside curve renames and heal modifier socket keys."""
+    """Sync outside ground and curve renames and heal modifier socket keys."""
     for ground in scene.scatter_grounds:
+        target = ground.target_object
+        if target is not None and target.name != ground.name:
+            ground.name = target.name
         for system in ground.scatter_systems:
             if system.curve_obj is not None and system.curve_obj.name != system.name:
                 system.name = system.curve_obj.name

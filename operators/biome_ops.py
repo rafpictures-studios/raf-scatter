@@ -369,6 +369,11 @@ class SCATTER_OT_save_biome(Operator):
     bl_options = {'REGISTER'}
 
     name: StringProperty(name="Name", default="")
+    capture_preview: BoolProperty(
+        name="Capture viewport as preview",
+        description="Render the 3D viewport (without overlays) as the biome's square thumbnail",
+        default=True,
+    )
 
     @classmethod
     def poll(cls, context):
@@ -381,6 +386,7 @@ class SCATTER_OT_save_biome(Operator):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "name")
+        layout.prop(self, "capture_preview")
         if biomes_utils.biome_exists(self.name):
             layout.label(text="Biome exists, it will be overwritten")
 
@@ -401,8 +407,36 @@ class SCATTER_OT_save_biome(Operator):
         except OSError as error:
             self.report({'ERROR'}, f"Could not save biome: {error}")
             return {'CANCELLED'}
+        message = f"Saved biome \"{safe_name}\" ({len(data['systems'])} system(s))"
+        level = 'INFO'
+        if self.capture_preview:
+            try:
+                biomes_utils.capture_thumbnail(context, safe_name)
+            except (OSError, RuntimeError) as error:
+                message += f"; no preview captured: {error}"
+                level = 'WARNING'
         refresh_biome_library(context, select=safe_name)
-        self.report({'INFO'}, f"Saved biome \"{safe_name}\" ({len(data['systems'])} system(s))")
+        self.report({level}, message)
+        return {'FINISHED'}
+
+
+class SCATTER_OT_capture_biome_preview(Operator):
+    bl_idname = "scatter.capture_biome_preview"
+    bl_label = "Capture Preview"
+    bl_description = "Render the 3D viewport (without overlays) as the biome's square thumbnail"
+    bl_options = {'REGISTER'}
+
+    biome_name: StringProperty(options={'HIDDEN'})
+
+    def execute(self, context):
+        if _refuse_pack_biome(self, self.biome_name):
+            return {'CANCELLED'}
+        try:
+            biomes_utils.capture_thumbnail(context, self.biome_name)
+        except (OSError, RuntimeError) as error:
+            self.report({'ERROR'}, f"Could not capture the preview: {error}")
+            return {'CANCELLED'}
+        refresh_biome_library(context, select=self.biome_name)
         return {'FINISHED'}
 
 
@@ -581,6 +615,7 @@ classes = (
     SCATTER_PackItem,
     SCATTER_OT_open_biome_browser,
     SCATTER_OT_save_biome,
+    SCATTER_OT_capture_biome_preview,
     SCATTER_OT_load_biome,
     SCATTER_OT_select_biome,
     SCATTER_OT_refresh_biomes,

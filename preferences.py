@@ -121,7 +121,12 @@ def _draw_biome_details(layout, item):
         scale=_PREVIEW_SCALE,
     )
     if not item.pack_id:
-        op = preview.operator("scatter.set_biome_preview", text="Set Preview", icon='IMAGE_DATA')
+        buttons = preview.row(align=True)
+        op = buttons.operator("scatter.set_biome_preview", text="Set Preview", icon='IMAGE_DATA')
+        op.biome_name = item.name
+        op = buttons.operator(
+            "scatter.capture_biome_preview", text="Capture", icon='RESTRICT_RENDER_OFF',
+        )
         op.biome_name = item.name
     info = split.column()
     info.label(text=item.label, icon='ERROR' if not item.valid else 'NONE')

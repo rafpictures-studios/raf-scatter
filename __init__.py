@@ -2,7 +2,7 @@ bl_info = {
     "name": "RAF Scatter",
     "description": "Ecosystem scattering toolkit for Blender.",
     "author": "Rizki Alfajri",
-    "version": (0, 1, 1),
+    "version": (0, 1, 2),
     "blender": (4, 5, 0),
     "location": "View3D > N-panel > RAF Scatter",
     "doc_url": "https://raf-scatter-docs.vercel.app/",

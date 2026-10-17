@@ -3,12 +3,12 @@ import datetime
 import json
 import os
 import re
-import shutil
 
 import bpy
 
 from ..properties import VERTEX_MASK_GROUP_PREFIX, is_pickable_mesh
 from . import geonodes as geonodes_utils
+from . import thumbnails
 
 
 #----CONSTANTS----
@@ -140,19 +140,33 @@ def write_biome(name, data):
         json.dump(data, handle, indent=2)
 
 
+def _replace_thumbnail(name, write):
+    """Write a new square PNG thumbnail with write(path), then drop older ones of the biome."""
+    target = os.path.join(get_biome_dir(), sanitize_biome_name(name) + ".png")
+    partial = target + ".part.png"
+    try:
+        write(partial)
+        for extension in THUMBNAIL_EXTENSIONS:
+            old = os.path.splitext(target)[0] + extension
+            if old != target and os.path.isfile(old):
+                os.remove(old)
+        os.replace(partial, target)
+    finally:
+        if os.path.isfile(partial):
+            os.remove(partial)
+
+
 def save_thumbnail(name, source_path):
-    """Copy an image beside the biome as its thumbnail, replacing any older one."""
+    """Store a 1:1 centre crop of an image as the biome thumbnail, replacing any older one."""
     extension = os.path.splitext(source_path)[1].lower()
     if extension not in THUMBNAIL_EXTENSIONS or not os.path.isfile(source_path):
         raise ValueError("thumbnail must be a .png or .jpg file")
-    safe_name = sanitize_biome_name(name)
-    target = os.path.join(get_biome_dir(), safe_name + extension)
-    if os.path.normcase(os.path.abspath(source_path)) == os.path.normcase(target):
-        return
-    old = find_thumbnail(safe_name)
-    if old is not None:
-        os.remove(old)
-    shutil.copyfile(source_path, target)
+    _replace_thumbnail(name, lambda path: thumbnails.write_square_png(source_path, path))
+
+
+def capture_thumbnail(context, name):
+    """Store a square viewport render as the biome thumbnail; raise RuntimeError on failure."""
+    _replace_thumbnail(name, lambda path: thumbnails.capture_viewport(context, path))
 
 
 def _validate_biome(data):
