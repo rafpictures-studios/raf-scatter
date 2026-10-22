@@ -521,40 +521,41 @@ class SCATTER_OT_import_selected(Operator):
                 return path, name
         return None, None
 
+    def _use_local_asset(self, idb):
+        """Use an asset of the current file as the instance, without importing anything."""
+        if isinstance(idb, bpy.types.Collection):
+            _apply_as_instance(obj=None, coll=idb, as_collection=True)
+        elif isinstance(idb, bpy.types.Object):
+            _apply_as_instance(obj=idb, coll=None, as_collection=False)
+        else:
+            self.report({'WARNING'}, "Only objects and collections can be used as instances")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Using '{idb.name}' from this file as the instance")
+        return {'FINISHED'}
+
     def _import_single(self, context, file, link):
+        asset = context.asset
+        if asset is not None and asset.local_id is not None:
+            return self._use_local_asset(asset.local_id)
         filepath, name = self._get_source(context)
         if filepath is None or not filepath:
             self.report({'WARNING'}, "Cannot determine source file")
             return {'CANCELLED'}
-
-        with bpy.data.libraries.load(filepath, link=link) as (data_from, data_to):
-            if name in data_from.objects:
-                data_to.objects = [name]
-            elif name in data_from.collections:
-                data_to.collections = [name]
-            else:
-                self.report({'WARNING'}, f"'{name}' not found in library")
-                return {'CANCELLED'}
-
-        obj = bpy.data.objects.get(name)
-        if obj is not None:
-            scatter_coll = _get_or_create_scatter_collection()
-            scatter_coll.objects.link(obj)
-            _clear_asset_data(obj)
-            _apply_as_instance(obj=obj, coll=None, as_collection=False)
-            self.report({'INFO'}, f"Imported '{name}' as instance object")
+        # an asset appended before (by an import or a biome load) is reused, not imported again
+        objs, colls, reused, _failed = _resolve_assets(filepath, [name], link)
+        verb = "Reused" if name in reused else "Imported"
+        scatter_coll = _get_or_create_scatter_collection()
+        if name in objs:
+            _ensure_under(scatter_coll, obj=objs[name])
+            _apply_as_instance(obj=objs[name], coll=None, as_collection=False)
+            self.report({'INFO'}, f"{verb} '{name}' as instance object")
             return {'FINISHED'}
-
-        coll = bpy.data.collections.get(name)
-        if coll is not None:
-            scatter_coll = _get_or_create_scatter_collection()
-            scatter_coll.children.link(coll)
-            _clear_asset_data(coll)
-            _apply_as_instance(obj=None, coll=coll, as_collection=True)
-            self.report({'INFO'}, f"Imported collection '{name}' as instance collection")
+        if name in colls:
+            _ensure_under(scatter_coll, coll=colls[name])
+            _apply_as_instance(obj=None, coll=colls[name], as_collection=True)
+            self.report({'INFO'}, f"{verb} collection '{name}' as instance collection")
             return {'FINISHED'}
-
-        self.report({'WARNING'}, "Import failed")
+        self.report({'WARNING'}, f"'{name}' not found in library")
         return {'CANCELLED'}
 
     def _get_target_collection(self, scatter_coll, collection_name):

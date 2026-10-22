@@ -79,6 +79,58 @@ def refresh_biome_library(context=None, select=None):
     if select in keys:
         wm.scatter_active_biome_index = keys.index(select)
     wm.scatter_active_biome_index = min(wm.scatter_active_biome_index, max(len(keys) - 1, 0))
+    _refresh_rows(wm, packs)
+
+
+def _add_row(rows, kind, label, biome_index=-1, pack_id="", detail=""):
+    row = rows.add()
+    row.name = label
+    row.kind = kind
+    row.biome_index = biome_index
+    row.pack_id = pack_id
+    row.detail = detail
+
+
+def _refresh_rows(wm, packs):
+    """Rebuild the grouped Preferences list: My Biomes first, then one group per pack."""
+    rows = wm.scatter_biome_rows
+    rows.clear()
+    local = [i for i, item in enumerate(wm.scatter_biomes) if not item.pack_id]
+    _add_row(rows, 'HEADER_LOCAL', "My Biomes", detail=f"{len(local)} biome(s)")
+    for index in local:
+        _add_row(rows, 'BIOME', wm.scatter_biomes[index].label, index)
+    if not local:
+        _add_row(rows, 'EMPTY', "No biomes saved yet")
+    for pack in packs:
+        parts = [f"v{pack['version']}"] if pack["version"] else []
+        parts += [pack["author"]] if pack["author"] else []
+        parts.append(f"{len(pack['biomes'])} biome(s)")
+        _add_row(rows, 'HEADER_PACK', pack["name"], pack_id=pack["id"], detail="  ·  ".join(parts))
+        for index, item in enumerate(wm.scatter_biomes):
+            if item.pack_id == pack["id"]:
+                _add_row(rows, 'BIOME', item.label, index, pack["id"])
+    select_biome_row(wm)
+
+
+def select_biome_row(wm):
+    """Point the grouped list at the row of the active biome."""
+    for index, row in enumerate(wm.scatter_biome_rows):
+        if row.kind == 'BIOME' and row.biome_index == wm.scatter_active_biome_index:
+            if wm.scatter_active_biome_row != index:
+                wm.scatter_active_biome_row = index
+            return
+
+
+def get_active_biome_row(wm):
+    rows = wm.scatter_biome_rows
+    index = wm.scatter_active_biome_row
+    return rows[index] if 0 <= index < len(rows) else None
+
+
+def _on_active_biome_row_update(self, context):
+    row = get_active_biome_row(self)
+    if row is not None and row.kind == 'BIOME' and 0 <= row.biome_index < len(self.scatter_biomes):
+        self.scatter_active_biome_index = row.biome_index
 
 
 def _biome_pick_items(self, context):
@@ -299,6 +351,18 @@ class SCATTER_BiomeItem(PropertyGroup):
     valid: BoolProperty(name="Valid", default=True)
 
 
+class SCATTER_BiomeRow(PropertyGroup):
+    """One row of the grouped biome list in the Preferences: a group header or a biome."""
+    name: StringProperty(name="Label")
+    kind: EnumProperty(items=(
+        ('HEADER_LOCAL', "My Biomes", ""), ('HEADER_PACK', "Pack", ""),
+        ('BIOME', "Biome", ""), ('EMPTY', "Empty", ""),
+    ))
+    biome_index: IntProperty(default=-1)
+    pack_id: StringProperty(name="Pack folder")
+    detail: StringProperty(name="Detail")
+
+
 class SCATTER_PackItem(PropertyGroup):
     """One installed biome pack as listed by the biome library."""
     name: StringProperty(name="Folder")
@@ -466,30 +530,6 @@ class SCATTER_OT_load_biome(Operator):
         return _load_biome(self, context, self.biome_name)
 
 
-class SCATTER_OT_select_biome(Operator):
-    bl_idname = "scatter.select_biome"
-    bl_label = "Select Biome"
-    bl_description = "Select this biome in the library"
-    bl_options = {'INTERNAL'}
-
-    index: IntProperty(options={'HIDDEN', 'SKIP_SAVE'})
-
-    @classmethod
-    def description(cls, context, properties):
-        biomes = context.window_manager.scatter_biomes
-        if not 0 <= properties.index < len(biomes):
-            return cls.bl_description
-        item = biomes[properties.index]
-        return f"{item.label} — {item.pack_name}" if item.pack_id else item.label
-
-    def execute(self, context):
-        wm = context.window_manager
-        if not 0 <= self.index < len(wm.scatter_biomes):
-            return {'CANCELLED'}
-        wm.scatter_active_biome_index = self.index
-        return {'FINISHED'}
-
-
 class SCATTER_OT_refresh_biomes(Operator):
     bl_idname = "scatter.refresh_biomes"
     bl_label = "Refresh Biomes"
@@ -612,12 +652,12 @@ class SCATTER_OT_open_biome_preferences(Operator):
 
 classes = (
     SCATTER_BiomeItem,
+    SCATTER_BiomeRow,
     SCATTER_PackItem,
     SCATTER_OT_open_biome_browser,
     SCATTER_OT_save_biome,
     SCATTER_OT_capture_biome_preview,
     SCATTER_OT_load_biome,
-    SCATTER_OT_select_biome,
     SCATTER_OT_refresh_biomes,
     SCATTER_OT_rename_biome,
     SCATTER_OT_set_biome_preview,
@@ -630,6 +670,10 @@ classes = (
 def register():
     bpy.types.WindowManager.scatter_biomes = CollectionProperty(type=SCATTER_BiomeItem)
     bpy.types.WindowManager.scatter_packs = CollectionProperty(type=SCATTER_PackItem)
+    bpy.types.WindowManager.scatter_biome_rows = CollectionProperty(type=SCATTER_BiomeRow)
+    bpy.types.WindowManager.scatter_active_biome_row = IntProperty(
+        default=0, update=_on_active_biome_row_update,
+    )
     bpy.types.WindowManager.scatter_active_biome_index = IntProperty(default=0)
     bpy.types.WindowManager.scatter_biome_pick = EnumProperty(
         name="Biome", description="Select the biome to load", items=_biome_pick_items,
@@ -645,5 +689,7 @@ def unregister():
         bpy.app.timers.unregister(_deferred_refresh)
     del bpy.types.WindowManager.scatter_biome_pick
     del bpy.types.WindowManager.scatter_active_biome_index
+    del bpy.types.WindowManager.scatter_active_biome_row
+    del bpy.types.WindowManager.scatter_biome_rows
     del bpy.types.WindowManager.scatter_packs
     del bpy.types.WindowManager.scatter_biomes

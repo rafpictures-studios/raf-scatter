@@ -219,19 +219,19 @@ def _install_members(archive, members, prefix, staging):
     return skipped
 
 
-def _install_nested(archive, member, add_asset_library):
+def _install_nested(archive, member):
     """Install the single .rafpack stored inside a downloaded zip."""
     work = tempfile.mkdtemp(prefix="raf_pack_")
     try:
         inner = os.path.join(work, "pack" + PACK_EXTENSION)
         with archive.open(member) as source, open(inner, "wb") as handle:
             shutil.copyfileobj(source, handle)
-        return install_pack(inner, add_asset_library, nested=True)
+        return install_pack(inner, nested=True)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def install_pack(filepath, add_asset_library, nested=False):
+def install_pack(filepath, nested=False):
     """Install a .rafpack, or a .zip holding one; return (manifest, skipped file count)."""
     if not zipfile.is_zipfile(filepath):
         raise ValueError("not a RAF Scatter biome pack")
@@ -241,7 +241,7 @@ def install_pack(filepath, add_asset_library, nested=False):
         if found is None:
             inner = [m for m in members if m.filename.lower().endswith(PACK_EXTENSION)]
             if len(inner) == 1 and not nested:
-                return _install_nested(archive, inner[0], add_asset_library)
+                return _install_nested(archive, inner[0])
             raise ValueError(f"no {PACK_MANIFEST} found — not a RAF Scatter biome pack")
         manifest_member, manifest_parts = found
         manifest = json.loads(archive.read(manifest_member).decode("utf-8"))
@@ -263,8 +263,7 @@ def install_pack(filepath, add_asset_library, nested=False):
             os.replace(staging, target)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-    if add_asset_library:
-        add_pack_asset_library(target, manifest["name"])
+    add_pack_asset_library(target, manifest["name"])
     return manifest, skipped
 
 

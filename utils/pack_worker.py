@@ -75,6 +75,10 @@ def run(job_path):
     for idb in loaded.values():
         if idb.asset_data is None:
             idb.asset_mark()
+    # every mesh object, also those inside instance collections, becomes a browsable asset
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and obj.asset_data is None:
+            obj.asset_mark()
     if loaded:
         os.makedirs(os.path.dirname(job["output"]), exist_ok=True)
         bpy.data.libraries.write(

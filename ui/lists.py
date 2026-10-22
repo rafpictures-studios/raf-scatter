@@ -1,7 +1,6 @@
 """UI lists for scatter systems and effectors."""
 from bpy.types import UIList
 
-from ..preferences import get_addon_prefs, is_biome_in_group
 from ..properties import EFFECTOR_ICON_NAMES, EFFECTOR_TYPE_ICONS
 from ..utils import geonodes as geonodes_utils
 from ..utils import icons as icon_utils
@@ -76,40 +75,51 @@ class SCATTER_UL_effectors(UIList):
         render_props.effector_index = index
 
 
-class SCATTER_UL_biomes(UIList):
+class SCATTER_UL_biome_rows(UIList):
+    """Grouped biome list: My Biomes, then one header per installed pack."""
+
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
-        thumbnail = icon_utils.get_biome_icon_id(item.name)
-        if not item.valid:
-            row.label(text=item.label, icon='ERROR')
+        if item.kind in {'HEADER_LOCAL', 'HEADER_PACK'}:
+            row.label(text=item.name, icon='HOME' if item.kind == 'HEADER_LOCAL' else 'PACKAGE')
+            detail = row.row()
+            detail.alignment = 'RIGHT'
+            detail.active = False
+            detail.label(text=item.detail)
+            return
+        row.separator(factor=2.0)
+        if item.kind == 'EMPTY':
+            row.active = False
+            row.label(text=item.name)
+            return
+        biome = data.scatter_biomes[item.biome_index]
+        thumbnail = icon_utils.get_biome_icon_id(biome.name)
+        if not biome.valid:
+            row.label(text=biome.label, icon='ERROR')
         elif thumbnail:
-            row.label(text=item.label, icon_value=thumbnail)
+            row.label(text=biome.label, icon_value=thumbnail)
         else:
-            row.label(text=item.label, icon='ASSET_MANAGER')
+            row.label(text=biome.label, icon='ASSET_MANAGER')
         detail = row.row()
         detail.alignment = 'RIGHT'
         detail.active = False
-        if item.pack_id:
-            detail.label(text=item.pack_name, icon='PACKAGE')
+        if biome.pack_id:
+            detail.label(text="", icon='LOCKED')
         else:
-            detail.label(text=item.created.split("T")[0])
+            detail.label(text=biome.created.split("T")[0])
 
     def filter_items(self, context, data, propname):
-        """Show only the biomes of the group picked in the preferences."""
-        items = getattr(data, propname)
-        prefs = get_addon_prefs(context)
-        group = prefs.biome_group if prefs else None
+        """Keep the group order; a name filter keeps matching biomes and their headers."""
+        rows = getattr(data, propname)
         needle = self.filter_name.lower()
-        flags = []
-        for item in items:
-            shown = group is None or is_biome_in_group(item, group)
-            shown = shown and (not needle or needle in item.label.lower())
-            flags.append(self.bitflag_filter_item if shown else 0)
+        if not needle:
+            return [self.bitflag_filter_item] * len(rows), []
+        flags = [self.bitflag_filter_item if row.kind != 'BIOME' or needle in row.name.lower()
+                 else 0 for row in rows]
         return flags, []
-
 
 classes = (
     SCATTER_UL_systems,
     SCATTER_UL_effectors,
-    SCATTER_UL_biomes,
+    SCATTER_UL_biome_rows,
 )

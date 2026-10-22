@@ -77,11 +77,6 @@ class SCATTER_OT_install_pack(Operator):
 
     filepath: StringProperty(subtype='FILE_PATH')
     filter_glob: StringProperty(default=_INSTALL_FILTER, options={'HIDDEN'})
-    add_asset_library: BoolProperty(
-        name="Add pack assets to Asset Browser",
-        description="Register the pack's assets folder as an asset library in the Preferences",
-        default=True,
-    )
 
     def invoke(self, context, event):
         context.window_manager.fileselect_add(self)
@@ -94,14 +89,12 @@ class SCATTER_OT_install_pack(Operator):
             return
         _draw_install_summary(body, bpy.path.abspath(self.filepath))
         body.separator()
-        body.prop(self, "add_asset_library")
-        _draw_dim_lines(body, ("Lets you drag the pack's assets", "from the Asset Browser"))
+        _draw_dim_lines(body, ("Its assets are added to the Asset Browser",
+                               "as a library of their own"))
 
     def execute(self, context):
         try:
-            manifest, skipped = packs_utils.install_pack(
-                bpy.path.abspath(self.filepath), self.add_asset_library,
-            )
+            manifest, skipped = packs_utils.install_pack(bpy.path.abspath(self.filepath))
         except (OSError, ValueError, zipfile.BadZipFile) as error:
             self.report({'ERROR'}, f"Could not install the pack: {error}")
             return {'CANCELLED'}

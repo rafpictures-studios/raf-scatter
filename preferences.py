@@ -2,7 +2,7 @@
 import sys
 
 import bpy
-from bpy.props import EnumProperty, IntProperty, StringProperty
+from bpy.props import EnumProperty, StringProperty
 from bpy.types import AddonPreferences
 
 from .utils import icons as icon_utils
@@ -14,15 +14,8 @@ _BIOME_GROUP_ITEMS = (
     (BIOME_GROUP_LOCAL, "My Biomes", "Biomes saved on this computer", 'HOME', 0),
     (BIOME_GROUP_IMPORTED, "Imported", "Biomes from installed packs (read-only)", 'PACKAGE', 1),
 )
-_BIOME_DISPLAY_ITEMS = (
-    ('LIST', "List", "Show the biomes as a list", 'SHORTDISPLAY', 0),
-    ('THUMBNAILS', "Thumbnails", "Show the biomes as a grid of previews", 'IMGDISPLAY', 1),
-)
 _ALL = "ALL"
 _PREVIEW_SCALE = 5.0
-_UI_UNIT_PX = 20
-_GRID_CELL_PADDING_PX = 24
-_GRID_MARGIN_PX = 120
 _PLACEHOLDER_HOST = "example.com"
 _LINKS = (
     ("Website", "https://raf-scatter-docs.vercel.app/", 'WORLD'),
@@ -174,37 +167,6 @@ def _draw_installed_packs(layout, wm):
         op.pack_id = pack.name
 
 
-def _draw_biome_grid(layout, context, prefs, indices):
-    """Draw the grouped biomes as a grid of selectable previews."""
-    wm = context.window_manager
-    box = layout.box()
-    if not indices:
-        return
-    ui_scale = context.preferences.view.ui_scale
-    width = context.region.width if context.region else 800
-    cell_px = (prefs.biome_thumbnail_size + _GRID_CELL_PADDING_PX) * ui_scale
-    columns = max(1, int((width - _GRID_MARGIN_PX * ui_scale) // cell_px))
-    grid = box.grid_flow(row_major=True, columns=columns, even_columns=True, even_rows=True)
-    scale = prefs.biome_thumbnail_size / _UI_UNIT_PX
-    fallback = icon_utils.get_builtin_icon_value('ASSET_MANAGER')
-    for index in indices:
-        item = wm.scatter_biomes[index]
-        cell = grid.column(align=True)
-        selected = index == wm.scatter_active_biome_index
-        # previews cannot be buttons, so the whole tile of the unselected biomes is dimmed
-        cell.active = selected
-        if item.valid:
-            icon = icon_utils.get_biome_icon_id(item.name) or fallback
-        else:
-            icon = icon_utils.get_builtin_icon_value('ERROR')
-        cell.template_icon(icon_value=icon, scale=scale)
-        op = cell.operator("scatter.select_biome", text=item.label, depress=selected, emboss=selected)
-        op.index = index
-    # a short row would stretch its cells over the whole width
-    for _index in range(columns - len(indices)):
-        grid.column().label(text="")
-
-
 #----PREFERENCES PANEL----
 class SCATTER_AP_preferences(AddonPreferences):
     bl_idname = __package__
@@ -213,11 +175,6 @@ class SCATTER_AP_preferences(AddonPreferences):
     pack_author: StringProperty(name="Pack Author", options={'HIDDEN'})
     biome_group: EnumProperty(
         name="Biome Group", items=_BIOME_GROUP_ITEMS, update=_on_biome_group_update,
-    )
-    biome_display: EnumProperty(name="Display Mode", items=_BIOME_DISPLAY_ITEMS)
-    biome_thumbnail_size: IntProperty(
-        name="Display Size", description="Size of the biome previews", subtype='PIXEL',
-        default=96, min=64, max=256,
     )
     default_library: EnumProperty(
         name="Default Library",
@@ -251,51 +208,38 @@ class SCATTER_AP_preferences(AddonPreferences):
         if body is None:
             return
         wm = context.window_manager
-        imported = self.biome_group == BIOME_GROUP_IMPORTED
-        indices = grouped_biome_indices(wm, self.biome_group)
+        row_item = None
+        if 0 <= wm.scatter_active_biome_row < len(wm.scatter_biome_rows):
+            row_item = wm.scatter_biome_rows[wm.scatter_active_biome_row]
         active = None
-        if wm.scatter_active_biome_index in indices:
-            active = wm.scatter_biomes[wm.scatter_active_biome_index]
+        if row_item is not None and row_item.kind == 'BIOME':
+            if 0 <= row_item.biome_index < len(wm.scatter_biomes):
+                active = wm.scatter_biomes[row_item.biome_index]
+        pack_id = row_item.pack_id if row_item is not None else ""
         tools = body.row(align=True)
         tools.operator("scatter.install_pack", text="Install Pack…", icon='PACKAGE')
         tools.operator("scatter.export_pack", text="Export Pack…", icon='EXPORT')
-        bar = body.split(factor=0.5)
-        bar.row(align=True).prop(self, "biome_group", text="")
-        view = bar.row(align=True)
-        if self.biome_display == 'THUMBNAILS':
-            view.prop(self, "biome_thumbnail_size", text="Size", slider=True)
-        else:
-            view.alignment = 'RIGHT'
-        view.prop(self, "biome_display", expand=True, icon_only=True)
         row = body.row()
-        if self.biome_display == 'THUMBNAILS':
-            _draw_biome_grid(row.column(), context, self, indices)
-        else:
-            row.template_list(
-                "SCATTER_UL_biomes", "", wm, "scatter_biomes", wm, "scatter_active_biome_index",
-                rows=6,
-            )
+        row.template_list(
+            "SCATTER_UL_biome_rows", "", wm, "scatter_biome_rows", wm, "scatter_active_biome_row",
+            rows=8,
+        )
         side = row.column(align=True)
-        if imported:
-            folder = side.row(align=True)
-            folder.enabled = active is not None
-            op = folder.operator("scatter.open_pack_folder", text="", icon='FILE_FOLDER')
-            op.pack_id = active.pack_id if active else ""
+        actions = side.column(align=True)
+        actions.enabled = active is not None and not active.pack_id
+        biome_name = active.name if active is not None else ""
+        op = actions.operator("scatter.rename_biome", text="", icon='GREASEPENCIL')
+        op.biome_name = biome_name
+        actions.operator("scatter.delete_biome", text="", icon='REMOVE').biome_name = biome_name
+        side.separator()
+        if pack_id:
+            side.operator("scatter.open_pack_folder", text="", icon='FILE_FOLDER').pack_id = pack_id
         else:
-            actions = side.column(align=True)
-            actions.enabled = active is not None
-            biome_name = active.name if active else ""
-            op = actions.operator("scatter.rename_biome", text="", icon='GREASEPENCIL')
-            op.biome_name = biome_name
-            actions.operator("scatter.delete_biome", text="", icon='REMOVE').biome_name = biome_name
-            side.separator()
             side.operator("scatter.open_biome_folder", text="", icon='FILE_FOLDER')
-        if not indices and imported:
-            _draw_hint(body, "No packs installed yet — use Install Pack… above")
-        elif not indices:
-            _draw_hint(body, "No biomes saved yet — save one from the Biomes popup in the N-panel")
-        elif active is not None:
+        if active is not None:
             _draw_biome_details(body, active)
+        elif not wm.scatter_biomes:
+            _draw_hint(body, "Save a biome from the Biomes popup in the N-panel, or install a pack")
         _draw_installed_packs(body, wm)
 
     def _draw_links(self, layout):
