@@ -196,7 +196,6 @@ def is_native_tool_lookup():
 def _activate_brush_asset_for_scatter_tool(identifier):
     """Activate the scatter brush asset, then put the scatter tool back on top of it."""
     global _native_tool_lookup
-    # asset activation switches to Blender's own tool for that brush, which must be findable
     _native_tool_lookup = True
     try:
         activated = _activate_brush_asset(identifier)
@@ -220,7 +219,6 @@ def restore_native_curves_tool():
         tool = workspace.tools.from_space_view3d_mode('SCULPT_CURVES', create=False)
         if tool is None or tool.idname not in BRUSH_BY_SCATTER_TOOL:
             continue
-        # setup() rewrites the stored tool without a toolbar lookup, so it works from any mode
         tool.setup(
             idname=NATIVE_CURVES_TOOL, cursor='DEFAULT', keymap="", gizmo_group="",
             brush_type='ANY', data_block="", operator="", index=0, options={'USE_BRUSHES'},

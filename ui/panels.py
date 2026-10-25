@@ -1,6 +1,7 @@
 """Main N-panel for RAF Scatter."""
 from bpy.types import Panel
 
+from ..utils import bake as bake_utils
 from ..utils import geonodes as geonodes_utils
 from ..utils import icons as icon_utils
 
@@ -35,6 +36,11 @@ class SCATTER_PT_main(Panel):
         if logo_icon is not None:
             self.layout.label(icon_value=logo_icon)
 
+    def draw_header_preset(self, context):
+        self.layout.operator(
+            "scatter.make_node_groups_local", text="", icon='LIBRARY_DATA_DIRECT', emboss=False,
+        )
+
     def draw(self, context):
         layout = self.layout
         scene = context.scene
@@ -52,7 +58,7 @@ class SCATTER_PT_main(Panel):
         header, panel = layout.panel("SCATTER_systems_panel", default_closed=False)
         header.label(text="Scatter System", icon='OUTLINER_OB_CURVES')
         if panel:
-            self.draw_systems_section(panel, ground)
+            self.draw_systems_section(panel, context, ground)
         sys_idx = ground.active_scatter_system_index
         if not (0 <= sys_idx < len(ground.scatter_systems)):
             return
@@ -72,7 +78,13 @@ class SCATTER_PT_main(Panel):
         header, panel = layout.panel("SCATTER_effectors_panel", default_closed=True)
         header.label(text=f"Masks ({len(system.effectors)})", icon='MODIFIER_DATA')
         if panel:
-            self.draw_effectors(panel, system)
+            self.draw_effectors(panel, context, system)
+        layout.separator(factor=0.4)
+        wind_on = geonodes_utils.get_wind_modifier(system) is not None
+        header, panel = layout.panel("SCATTER_animation_panel", default_closed=True)
+        header.label(text="Animation (Wind)" if wind_on else "Animation", icon='FORCE_TURBULENCE')
+        if panel:
+            self.draw_animation(panel, system)
 
     def draw_ground_section(self, layout, scene):
         if len(scene.scatter_grounds) == 0:
@@ -99,8 +111,17 @@ class SCATTER_PT_main(Panel):
             "scatter.add_ground_from_selected", text="Add Selected as Ground", icon='IMPORT',
         )
 
-    def draw_systems_section(self, layout, ground):
+    def draw_systems_section(self, layout, context, ground):
         box = layout.box()
+        wm = context.window_manager
+        if wm.scatter_biome_load_name:
+            percent = round(wm.scatter_biome_load_progress * 100)
+            bar = box.row()
+            bar.scale_y = 1.4
+            bar.progress(
+                factor=wm.scatter_biome_load_progress, type='BAR',
+                text=f"Loading {wm.scatter_biome_load_name}… {percent}%",
+            )
         row = box.row()
         row.template_list(
             "SCATTER_UL_systems", "", ground, "scatter_systems",
@@ -112,7 +133,9 @@ class SCATTER_PT_main(Panel):
         side.operator("scatter.remove_system", icon='REMOVE', text="")
         side.operator("scatter.duplicate_system", icon='DUPLICATE', text="")
         side.separator(factor=1.0)
-        side.operator("scatter.open_biome_browser", icon='ASSET_MANAGER', text="")
+        side.operator(
+            "scatter.open_biome_browser", icon_value=icon_utils.get_biome_logo_value(), text="",
+        )
         side.operator("scatter.open_biome_preferences", icon='PREFERENCES', text="")
 
     def draw_manual_controls(self, layout, scene, system):
@@ -157,14 +180,17 @@ class SCATTER_PT_main(Panel):
             col2.prop(system, "manual_instances_object")
         else:
             col2.prop(system, "manual_instances_collection")
+        wind_on = geonodes_utils.get_wind_modifier(system) is not None
         for socket_name in (
             "Seed", "Scale Min", "Scale Max", "Random Rotation", "Translation", "Local Space",
         ):
             prop_ref = geonodes_utils.get_modifier_input_prop(instances_modifier, socket_name)
             if prop_ref is None:
                 col2.label(text=f"{socket_name} socket not found")
-            else:
-                _draw_socket_row(col2, instances_modifier, socket_name, prop_ref)
+                continue
+            cell = col2.column()
+            cell.enabled = not (wind_on and socket_name in geonodes_utils.WIND_LOCKED_SOCKETS)
+            _draw_socket_row(cell, instances_modifier, socket_name, prop_ref)
         if len(system.effectors) > 0:
             for socket_name in ("Edge Falloff", "Falloff"):
                 prop_ref = geonodes_utils.get_modifier_input_prop(instances_modifier, socket_name)
@@ -215,6 +241,7 @@ class SCATTER_PT_main(Panel):
             col2.prop(system, "instances_object")
         else:
             col2.prop(system, "instances_collection")
+        wind_on = geonodes_utils.get_wind_modifier(system) is not None
         for socket_name in (
             "Align Surface", "Scale Min", "Scale Max", "Random Rotation", "Translation",
             "Local Space",
@@ -223,7 +250,9 @@ class SCATTER_PT_main(Panel):
             if prop_ref is None:
                 col2.label(text=f"{socket_name} socket not found")
                 continue
-            col2.prop(*prop_ref, text=socket_name)
+            cell = col2.column()
+            cell.enabled = not (wind_on and socket_name in geonodes_utils.WIND_LOCKED_SOCKETS)
+            cell.prop(*prop_ref, text=socket_name)
         if len(system.effectors) > 0:
             for socket_name in ("Edge Falloff", "Falloff"):
                 prop_ref = geonodes_utils.get_modifier_input_prop(instances_modifier, socket_name)
@@ -232,7 +261,36 @@ class SCATTER_PT_main(Panel):
                     continue
                 col2.prop(*prop_ref, text=socket_name)
 
-    def draw_effectors(self, layout, system):
+    def draw_animation(self, layout, system):
+        """Animated instances: one toggle per animation type, its values below when on."""
+        wind = geonodes_utils.get_wind_modifier(system)
+        has_instances = geonodes_utils.get_system_instances_modifier(system) is not None
+        row = layout.row(align=True)
+        row.scale_y = 1.4
+        row.enabled = has_instances
+        row.operator(
+            "scatter.toggle_wind", text="Wind", icon='FORCE_WIND', depress=wind is not None,
+        )
+        row.operator("scatter.reset_wind", text="", icon='LOOP_BACK')
+        row.operator("scatter.copy_wind", text="", icon='COPYDOWN')
+        row.operator("scatter.paste_wind", text="", icon='PASTEDOWN')
+        if not has_instances:
+            hint = layout.row()
+            hint.active = False
+            hint.label(text="Turn on Use Instances first", icon='INFO')
+            return
+        if wind is None:
+            return
+        col = layout.column()
+        col.use_property_split = True
+        col.use_property_decorate = False
+        self._draw_socket_set(col, wind, geonodes_utils.WIND_SOCKETS)
+        hint = layout.column(align=True)
+        hint.active = False
+        hint.label(text="Random Rotation and Align Surface", icon='INFO')
+        hint.label(text="are off while the wind is on.", icon='BLANK1')
+
+    def draw_effectors(self, layout, context, system):
         box = layout.box()
         row = box.row()
         row.template_list(
@@ -278,6 +336,8 @@ class SCATTER_PT_main(Panel):
             self._draw_proximity_controls(col, system, effector, modifier)
         elif effector.effector_type == 'MASK_BY_ATTRIBUTE':
             self._draw_vertex_controls(col, system, effector, modifier)
+        elif effector.effector_type == 'MASK_BY_AO':
+            self._draw_ao_controls(col, context, system, modifier)
 
     def _draw_texture_controls(self, col, modifier):
         label = geonodes_utils.get_menu_socket_label(modifier, "Texture")
@@ -369,6 +429,41 @@ class SCATTER_PT_main(Panel):
             else:
                 col.prop(*mode_prop_ref, text="Mode")
             self._draw_socket_set(col, modifier, geonodes_utils.VERTEX_EDGE_BLEND_SOCKETS)
+
+    def _draw_ao_controls(self, col, context, system, modifier):
+        """Draw the Bake AO step, then the AO sliders once the ground carries the bake."""
+        label_row = col.row()
+        label_row.active = False
+        label_row.label(text="Ambient Occlusion")
+        ground = system.target_ground
+        wm = context.window_manager
+        baking = ground is not None and wm.scatter_ao_bake_ground == ground.name
+        if not bake_utils.has_baked_ao(ground):
+            hint = col.column(align=True)
+            hint.active = False
+            hint.label(text="This mask needs ambient occlusion", icon='INFO')
+            hint.label(text="baked on the Target Ground.", icon='BLANK1')
+            bake_row = col.row()
+            bake_row.scale_y = 1.4
+            if baking:
+                self._draw_bake_progress(bake_row, wm)
+            else:
+                bake_row.operator("scatter.bake_ao", text="Bake AO", icon='RENDER_STILL')
+            return
+        self._draw_socket_set(col, modifier, geonodes_utils.AO_BASE_SOCKETS)
+        col.separator(factor=0.3)
+        if baking:
+            self._draw_bake_progress(col.row(), wm)
+        else:
+            col.operator("scatter.bake_ao", text="Re-bake AO", icon='FILE_REFRESH')
+
+    @staticmethod
+    def _draw_bake_progress(layout, wm):
+        percent = round(wm.scatter_ao_bake_progress * 100)
+        layout.progress(
+            factor=wm.scatter_ao_bake_progress, type='BAR',
+            text=f"Baking AO… {percent}%  (Esc to cancel)",
+        )
 
     def _draw_grouped_mask_controls(self, col, modifier, group_label, base_sockets, edge_sockets):
         """Draw base sockets, an edge blend toggle, and edge sockets."""

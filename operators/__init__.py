@@ -3,6 +3,7 @@ import bpy
 from . import ground_ops
 from . import system_ops
 from . import effector_ops
+from . import animation_ops
 from . import brush_ops
 from . import procedural_ops
 from . import manual_ops
@@ -14,6 +15,7 @@ _modules = (
     ground_ops,
     system_ops,
     effector_ops,
+    animation_ops,
     brush_ops,
     procedural_ops,
     manual_ops,

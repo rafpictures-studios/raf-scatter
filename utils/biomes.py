@@ -186,6 +186,8 @@ def _validate_biome(data):
         instances = system.get("instances")
         if instances is not None and not isinstance(instances, dict):
             raise ValueError("invalid instances entry")
+        if not isinstance(system.get("animation", {}), dict):
+            raise ValueError("invalid animation entry")
         effectors = system.get("effectors", [])
         if not isinstance(effectors, list):
             raise ValueError("invalid effector list")
@@ -365,6 +367,18 @@ def _serialize_instances(system, describe_asset):
     }
 
 
+def _serialize_animation(system):
+    """Return the animation block of a system: the wind values, or an empty dict."""
+    modifier = geonodes_utils.get_wind_modifier(system)
+    if modifier is None:
+        return {}
+    return {"wind": {
+        "sockets": _serialize_sockets(modifier, set()),
+        "saved_rotation": list(system.wind_saved_rotation),
+        "saved_align": system.wind_saved_align,
+    }}
+
+
 def _serialize_system(system, describe_asset):
     curve_obj = system.curve_obj
     effectors = [_serialize_effector(system, effector) for effector in system.effectors]
@@ -378,6 +392,7 @@ def _serialize_system(system, describe_asset):
         ),
         "instances": _serialize_instances(system, describe_asset),
         "effectors": [entry for entry in effectors if entry],
+        "animation": _serialize_animation(system),
     }
 
 
@@ -515,6 +530,7 @@ def make_effector_clipboard(system, effectors):
     entries = [_serialize_effector(system, effector) for effector in effectors]
     return json.dumps({
         "source": system.name,
+        "source_curve": system.curve_obj.name if system.curve_obj is not None else "",
         "copied": _timestamp(),
         "effectors": [entry for entry in entries if entry],
     })

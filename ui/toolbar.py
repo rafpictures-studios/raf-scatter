@@ -68,7 +68,6 @@ def _tools_from_context(cls, context, mode=None):
         if not _scatter_tool_defs:
             _scatter_tool_defs.extend(_build_tool_defs())
         yield from _scatter_tool_defs
-        # lookups (never drawing) still find Blender's Brush tool, so nothing warns "not found"
         if not _drawing_toolbar:
             native = _native_brush_tool(context)
             if native is not None:
@@ -92,8 +91,6 @@ def _tool_set_by_brush_type_execute(self, context):
     """Keep a scatter tool active when Blender looks for a tool after a brush change."""
     if not _is_session_curve(context) or brush_utils.is_native_tool_lookup():
         return _original_brush_type_execute(self, context)
-    # outside the five scatter brush types Blender would fall back to its own Brush tool,
-    # which the session toolbar does not list; stay on the current scatter tool instead
     for tool_id, brush_type in brush_utils.SCATTER_TOOLS.values():
         if brush_type == self.brush_type:
             brush_utils.set_curves_tool(tool_id)
@@ -107,7 +104,6 @@ def _generate_toolbar_keymap(context, space_type, **kwargs):
     keymap = _original_generate(context, space_type, **kwargs)
     if keymap is None:
         return keymap
-    # tool tooltips read their "Shortcut" line from this keymap
     for kmi in [kmi for kmi in keymap.keymap_items if kmi.idname == "wm.tool_set_by_id"]:
         if kmi.properties.name in brush_utils.BRUSH_BY_SCATTER_TOOL:
             keymap.keymap_items.remove(kmi)

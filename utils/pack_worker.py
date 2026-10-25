@@ -28,7 +28,6 @@ def _append_requests(requests):
                 collections = [
                     name for name in names if name not in objects and name in data_from.collections
                 ]
-                # copies: Blender replaces the assigned list items with the loaded IDs
                 data_to.objects = list(objects)
                 data_to.collections = list(collections)
         except OSError:
@@ -59,7 +58,6 @@ def _pack_images():
             image.pack()
         except RuntimeError:
             missing.append(image.name)
-            # no absolute path from the author's machine may travel with the pack
             image.filepath = "//" + os.path.basename(bpy.path.abspath(image.filepath))
     return missing
 
@@ -75,7 +73,6 @@ def run(job_path):
     for idb in loaded.values():
         if idb.asset_data is None:
             idb.asset_mark()
-    # every mesh object, also those inside instance collections, becomes a browsable asset
     for obj in bpy.data.objects:
         if obj.type == 'MESH' and obj.asset_data is None:
             obj.asset_mark()

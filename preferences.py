@@ -110,7 +110,7 @@ def _draw_biome_details(layout, item):
     preview = split.column(align=True)
     thumbnail = icon_utils.get_biome_icon_id(item.name)
     preview.template_icon(
-        icon_value=thumbnail or icon_utils.get_builtin_icon_value('ASSET_MANAGER'),
+        icon_value=thumbnail or icon_utils.get_biome_logo_value(),
         scale=_PREVIEW_SCALE,
     )
     if not item.pack_id:
@@ -204,42 +204,45 @@ class SCATTER_AP_preferences(AddonPreferences):
 
     def _draw_biome_library(self, layout, context):
         header, body = layout.panel("RAF_SCATTER_prefs_biomes", default_closed=False)
-        header.label(text="Biome Library", icon='ASSET_MANAGER')
+        header.label(text="Biome Library", icon_value=icon_utils.get_biome_logo_value())
         if body is None:
             return
         wm = context.window_manager
-        row_item = None
-        if 0 <= wm.scatter_active_biome_row < len(wm.scatter_biome_rows):
-            row_item = wm.scatter_biome_rows[wm.scatter_active_biome_row]
+        imported = self.biome_group == BIOME_GROUP_IMPORTED
+        indices = grouped_biome_indices(wm, self.biome_group)
         active = None
-        if row_item is not None and row_item.kind == 'BIOME':
-            if 0 <= row_item.biome_index < len(wm.scatter_biomes):
-                active = wm.scatter_biomes[row_item.biome_index]
-        pack_id = row_item.pack_id if row_item is not None else ""
+        if wm.scatter_active_biome_index in indices:
+            active = wm.scatter_biomes[wm.scatter_active_biome_index]
         tools = body.row(align=True)
         tools.operator("scatter.install_pack", text="Install Pack…", icon='PACKAGE')
         tools.operator("scatter.export_pack", text="Export Pack…", icon='EXPORT')
+        body.row(align=True).prop(self, "biome_group", text="")
         row = body.row()
         row.template_list(
-            "SCATTER_UL_biome_rows", "", wm, "scatter_biome_rows", wm, "scatter_active_biome_row",
-            rows=8,
+            "SCATTER_UL_biomes", "", wm, "scatter_biomes", wm, "scatter_active_biome_index",
+            rows=6,
         )
         side = row.column(align=True)
-        actions = side.column(align=True)
-        actions.enabled = active is not None and not active.pack_id
-        biome_name = active.name if active is not None else ""
-        op = actions.operator("scatter.rename_biome", text="", icon='GREASEPENCIL')
-        op.biome_name = biome_name
-        actions.operator("scatter.delete_biome", text="", icon='REMOVE').biome_name = biome_name
-        side.separator()
-        if pack_id:
-            side.operator("scatter.open_pack_folder", text="", icon='FILE_FOLDER').pack_id = pack_id
+        if imported:
+            folder = side.row(align=True)
+            folder.enabled = active is not None
+            op = folder.operator("scatter.open_pack_folder", text="", icon='FILE_FOLDER')
+            op.pack_id = active.pack_id if active else ""
         else:
+            actions = side.column(align=True)
+            actions.enabled = active is not None
+            biome_name = active.name if active else ""
+            op = actions.operator("scatter.rename_biome", text="", icon='GREASEPENCIL')
+            op.biome_name = biome_name
+            actions.operator("scatter.delete_biome", text="", icon='REMOVE').biome_name = biome_name
+            side.separator()
             side.operator("scatter.open_biome_folder", text="", icon='FILE_FOLDER')
-        if active is not None:
+        if not indices and imported:
+            _draw_hint(body, "No packs installed yet — use Install Pack… above")
+        elif not indices:
+            _draw_hint(body, "No biomes saved yet — save one from the Biomes popup in the N-panel")
+        elif active is not None:
             _draw_biome_details(body, active)
-        elif not wm.scatter_biomes:
-            _draw_hint(body, "Save a biome from the Biomes popup in the N-panel, or install a pack")
         _draw_installed_packs(body, wm)
 
     def _draw_links(self, layout):

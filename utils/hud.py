@@ -125,7 +125,7 @@ def _draw_rounded_box(x, y, width, height, radius, color):
             for index in range(segments + 1):
                 angle = math.radians(start_angle + 90.0 * index / segments)
                 vertices.append((cx + radius * math.cos(angle), cy + radius * math.sin(angle)))
-        vertices.append(vertices[1])  # TRI_FAN does not close itself
+        vertices.append(vertices[1])
         batch = batch_for_shader(shader, "TRI_FAN", {"pos": vertices})
         _box_batch_cache[key] = batch
     gpu.state.blend_set("ALPHA")

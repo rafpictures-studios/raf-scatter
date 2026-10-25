@@ -4,6 +4,7 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator
 
 from . import brush_ops
+from ..utils import colors as color_utils
 from ..utils import geonodes as geonodes_utils
 
 
@@ -135,6 +136,7 @@ def create_system(context, ground, system_type, name=None):
     item.target_ground = target
     item.curve_obj = curve_obj
     item.name = curve_obj.name
+    color_utils.assign_system_color(ground, item)
     ground.scatter_systems.move(len(ground.scatter_systems) - 1, 0)
     ground.active_scatter_system_index = 0
     return ground.scatter_systems[0], warning
@@ -217,6 +219,9 @@ class SCATTER_OT_duplicate_system(Operator):
         new_system.manual_instances_object = system.manual_instances_object
         new_system.manual_instances_collection = system.manual_instances_collection
         new_system.manual_instances_mode = system.manual_instances_mode
+        new_system.wind_saved_rotation = system.wind_saved_rotation
+        new_system.wind_saved_align = system.wind_saved_align
+        color_utils.assign_system_color(ground, new_system)
         for effector in system.effectors:
             new_effector = new_system.effectors.add()
             new_effector.effector_type = effector.effector_type
@@ -313,10 +318,52 @@ class SCATTER_OT_randomize_seed(Operator):
         return {'FINISHED'}
 
 
+class SCATTER_OT_make_node_groups_local(Operator):
+    bl_idname = "scatter.make_node_groups_local"
+    bl_label = "Make Node Groups Local"
+    bl_description = (
+        "Copy the linked RAF Scatter node groups into this file, so it opens correctly on a "
+        "computer without RAF Scatter. Do this last, right before sending the file: "
+        "systems added afterwards link again"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    show_inputs: BoolProperty(
+        name="Show All Inputs in Modifiers",
+        description=(
+            "Show every input of the RAF Scatter node groups in the modifier panel "
+            "(the add-on normally hides most of them and shows them in its own panel)"
+        ),
+        default=False,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return geonodes_utils.count_linked_node_groups() > 0
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(
+            self, title="Make Node Groups Local", confirm_text="Make Local",
+        )
+
+    def draw(self, context):
+        layout = self.layout
+        hint = layout.column(align=True)
+        hint.label(text="The node groups are copied into this file", icon='INFO')
+        hint.label(text="and can then be edited.", icon='BLANK1')
+        layout.prop(self, "show_inputs")
+
+    def execute(self, context):
+        count = geonodes_utils.make_node_groups_local(self.show_inputs)
+        self.report({'INFO'}, f"Made {count} RAF Scatter node group(s) local")
+        return {'FINISHED'}
+
+
 classes = (
     SCATTER_OT_add_system,
     SCATTER_OT_remove_system,
     SCATTER_OT_duplicate_system,
     SCATTER_OT_toggle_curve_visibility,
     SCATTER_OT_randomize_seed,
+    SCATTER_OT_make_node_groups_local,
 )

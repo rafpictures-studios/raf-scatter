@@ -9,6 +9,7 @@ from bpy.types import Operator
 from .biome_ops import refresh_biome_library
 from ..preferences import BIOME_GROUP_IMPORTED, sync_biome_selection
 from ..utils import biomes as biomes_utils
+from ..utils import icons as icon_utils
 from ..utils import packs as packs_utils
 
 
@@ -84,7 +85,7 @@ class SCATTER_OT_install_pack(Operator):
 
     def draw(self, context):
         header, body = self.layout.panel("SCATTER_install_pack", default_closed=False)
-        header.label(text="RAF Biome Installer", icon='PACKAGE')
+        header.label(text="RAF Biome Installer", icon_value=icon_utils.get_biome_logo_value())
         if body is None:
             return
         _draw_install_summary(body, bpy.path.abspath(self.filepath))

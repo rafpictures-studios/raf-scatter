@@ -222,7 +222,6 @@ def _load_assets(filepath, names, link):
         file_collections = list(data_from.collections)
         obj_names = [n for n in names if n in data_from.objects]
         coll_names = [n for n in names if n not in obj_names and n in data_from.collections]
-        # copies: Blender replaces the assigned list items with the loaded IDs
         data_to.objects = list(obj_names)
         data_to.collections = list(coll_names)
 
@@ -541,7 +540,6 @@ class SCATTER_OT_import_selected(Operator):
         if filepath is None or not filepath:
             self.report({'WARNING'}, "Cannot determine source file")
             return {'CANCELLED'}
-        # an asset appended before (by an import or a biome load) is reused, not imported again
         objs, colls, reused, _failed = _resolve_assets(filepath, [name], link)
         verb = "Reused" if name in reused else "Imported"
         scatter_coll = _get_or_create_scatter_collection()

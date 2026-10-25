@@ -281,7 +281,6 @@ def _guard_paint_curve_edit_mode(scene, depsgraph):
     if _paint_curves_in_edit_mode() and not bpy.app.timers.is_registered(
         _leave_paint_curve_edit_mode
     ):
-        # mode changes are not allowed while the depsgraph is being updated
         bpy.app.timers.register(_leave_paint_curve_edit_mode, first_interval=0.0)
 
 
@@ -405,7 +404,6 @@ class SCATTER_OT_start_manual_paint(Operator):
         brush_utils.select_all_curve_points(context)
         _falloff_applied.clear()
         _apply_default_falloff(scene)
-        # set last so depsgraph runs during execute never see a session in OBJECT mode
         scene.scatter_paint_ui_saved = True
         _sync_native_cursor(scene, True)
         _start_cursor_tracking(context, space)

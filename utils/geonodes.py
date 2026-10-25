@@ -1,8 +1,11 @@
-"""Geometry Nodes helpers for local-copy node groups and socket access."""
+"""Geometry Nodes helpers for the linked add-on node groups and socket access."""
 import os
 import random
+import re
 
 import bpy
+
+from .bake import AO_ATTRIBUTE_NAME
 
 
 #----CONSTANTS----
@@ -13,6 +16,9 @@ PROCEDURAL_NODE_GROUP_NAME = "gn_proceduralScatter_points"
 INSTANCES_NODE_GROUP_NAME = "gn_proceduralScatter_instances"
 MANUAL_POINTS_NODE_GROUP_NAME = "gn_manualScatter_points"
 MANUAL_INSTANCES_NODE_GROUP_NAME = "gn_manualScatter_instances"
+WIND_NODE_GROUP_NAME = "gn_windAnimation"
+WIND_SOCKETS = ("Speed", "Power", "Scale", "Distortion", "Switch Direction")
+WIND_LOCKED_SOCKETS = {"Random Rotation", "Align Surface"}
 SURFACE_DEFORM_NAME_PREFIX = "Surface Deform"
 EFFECTOR_NODE_GROUPS = {
     'MASK_BY_TEXTURE': "gn_effectorTexture",
@@ -20,6 +26,7 @@ EFFECTOR_NODE_GROUPS = {
     'MASK_BY_NORMAL': "gn_effectorSlope",
     'GEOMETRY_PROXIMITY': "gn_effectorProximity",
     'MASK_BY_ATTRIBUTE': "gn_effectorVertex",
+    'MASK_BY_AO': "gn_effectorAO",
 }
 TEXTURE_MENU_OPTIONS = (
     ("Noise", {"Invert Color", "Level", "Seed", "Scale", "Detail", "Roughness"}),
@@ -41,33 +48,46 @@ PROXIMITY_BASE_SOCKETS = {"Distance", "Invert"}
 PROXIMITY_EDGE_BLEND_SOCKETS = set(_EDGE_BLEND_SOCKETS)
 VERTEX_BASE_SOCKETS = {"Invert"}
 VERTEX_EDGE_BLEND_SOCKETS = set(_EDGE_BLEND_SOCKETS)
+AO_BASE_SOCKETS = {"Radius", "Invert"}
 _UNBOUNDED_SEED_SPAN = 1_000_000
 _UNBOUNDED_INT_SEED_RANGE = (0, 10000)
 _FLOAT_SEED_LIMIT = 1000.0
-# Blender 5.2 moved Geometry Nodes modifier inputs from ID properties to per-socket structs
 USES_INPUT_STRUCTS = "properties" in bpy.types.NodesModifier.bl_rna.properties
 _INPUT_STRUCT_FIELDS = ("type", "attribute_name", "layer_name", "value")
+_NAME_SUFFIX_RE = re.compile(r"\.\d{3}$")
 
 
-#----APPEND LOAD----
-def _append_node_groups(names):
-    """Append node groups as local copies and reuse resident local ones."""
+#----LIBRARY LINK----
+def _norm_path(path):
+    return os.path.normcase(os.path.abspath(bpy.path.abspath(path)))
+
+
+def node_group_base_name(node_group):
+    """Name of a node group without the .001 suffix Blender adds on a name clash."""
+    return _NAME_SUFFIX_RE.sub("", node_group.name)
+
+
+def get_node_groups_library():
+    """The add-on's linked node_groups.blend in this file, or None."""
+    target = _norm_path(_NODE_GROUPS_BLEND)
+    for library in bpy.data.libraries:
+        if _norm_path(library.filepath) == target:
+            return library
+    return None
+
+
+def _link_node_groups(names):
+    """Link node groups from the add-on library; linked groups cannot be edited in the file."""
+    library = get_node_groups_library()
     result = {}
-    to_load = []
-    for name in names:
-        existing = bpy.data.node_groups.get(name)
-        if existing is not None and existing.library is None:
-            result[name] = existing
-            continue
-        if existing is not None:
-            if existing.users == 0:
-                bpy.data.node_groups.remove(existing)
-            else:
-                existing.name = f"{name}.linked_stale"
-        to_load.append(name)
+    if library is not None:
+        for node_group in bpy.data.node_groups:
+            if node_group.library == library and node_group.name in names:
+                result[node_group.name] = node_group
+    to_load = [name for name in names if name not in result]
     if not to_load:
         return result
-    with bpy.data.libraries.load(_NODE_GROUPS_BLEND, link=False) as (data_from, data_to):
+    with bpy.data.libraries.load(_NODE_GROUPS_BLEND, link=True) as (data_from, data_to):
         missing = [name for name in to_load if name not in data_from.node_groups]
         if missing:
             raise RuntimeError(f"Node group(s) {missing} not found in {_NODE_GROUPS_BLEND}")
@@ -77,9 +97,94 @@ def _append_node_groups(names):
     return result
 
 
-def _append_node_group(name):
-    """Append a single node group."""
-    return _append_node_groups([name])[name]
+def _link_node_group(name):
+    """Link a single node group."""
+    return _link_node_groups([name])[name]
+
+
+def relink_node_groups_library():
+    """Point a library linked by another RAF Scatter install (other folder or Blender version)
+    at this install's node_groups.blend; return True when a library was moved."""
+    if get_node_groups_library() is not None:
+        return False
+    target = os.path.abspath(_NODE_GROUPS_BLEND)
+    for library in bpy.data.libraries:
+        if _is_addon_library_path(library.filepath):
+            library.filepath = target
+            library.reload()
+            break
+    else:
+        return False
+    for library in list(bpy.data.libraries):
+        if _is_addon_library_path(library.filepath) and not _library_ids(library):
+            bpy.data.libraries.remove(library)
+    return True
+
+
+def _is_addon_library_path(path):
+    """True for the node_groups.blend of any RAF Scatter install."""
+    parts = os.path.normcase(os.path.normpath(bpy.path.abspath(path))).split(os.sep)
+    return len(parts) >= 3 and parts[-2:] == ["resources", "node_groups.blend"] and (
+        parts[-3].startswith("raf_scatter")
+    )
+
+
+def _library_ids(library):
+    """Every datablock of the file that comes from the given library."""
+    ids = []
+    for attribute in dir(bpy.data):
+        if attribute.startswith("_") or attribute == "libraries":
+            continue
+        collection = getattr(bpy.data, attribute, None)
+        if not isinstance(collection, bpy.types.bpy_prop_collection):
+            continue
+        ids += [
+            idb for idb in collection
+            if isinstance(idb, bpy.types.ID) and idb.library == library
+        ]
+    return ids
+
+
+def count_linked_node_groups():
+    library = get_node_groups_library()
+    if library is None:
+        return 0
+    return sum(1 for node_group in bpy.data.node_groups if node_group.library == library)
+
+
+def make_node_groups_local(show_inputs=False):
+    """Make the linked RAF Scatter node groups (and what they use) local; return how many groups.
+    show_inputs also shows every input in the modifier panel (the add-on hides most of them)."""
+    library = get_node_groups_library()
+    if library is None:
+        return 0
+    names = {
+        node_group.name for node_group in bpy.data.node_groups if node_group.library == library
+    }
+    count = len(names)
+    remaining = _library_ids(library)
+    while remaining:
+        for idb in remaining:
+            idb.make_local()
+        left = _library_ids(library)
+        if len(left) == len(remaining):
+            break
+        remaining = left
+    if not remaining:
+        bpy.data.libraries.remove(library)
+    if show_inputs:
+        for node_group in bpy.data.node_groups:
+            if node_group.library is None and node_group_base_name(node_group) in names:
+                _show_inputs_in_modifier(node_group)
+    return count
+
+
+def _show_inputs_in_modifier(node_group):
+    for item in node_group.interface.items_tree:
+        if item.item_type != 'SOCKET' or item.in_out != 'INPUT':
+            continue
+        if hasattr(item, "hide_in_modifier"):
+            item.hide_in_modifier = False
 
 
 #----MODIFIER STACK----
@@ -125,7 +230,7 @@ def _is_effector_modifier(modifier):
     return (
         modifier.type == 'NODES'
         and modifier.node_group is not None
-        and modifier.node_group.name in EFFECTOR_NODE_GROUPS.values()
+        and node_group_base_name(modifier.node_group) in EFFECTOR_NODE_GROUPS.values()
     )
 
 
@@ -206,7 +311,7 @@ def find_modifier_by_node_group(curve_obj, node_group_name):
         if (
             modifier.type == 'NODES'
             and modifier.node_group is not None
-            and modifier.node_group.name == node_group_name
+            and node_group_base_name(modifier.node_group) == node_group_name
         ):
             return modifier
     return None
@@ -378,7 +483,6 @@ def set_modifier_input_value(modifier, socket_name, value):
     if socket is None or not _write_socket_value(modifier, socket, value):
         return False
     modifier.id_data.update_tag()
-    # visibility toggle forces the modifier to re-evaluate
     enabled = modifier.show_viewport
     modifier.show_viewport = not enabled
     modifier.show_viewport = enabled
@@ -387,7 +491,6 @@ def set_modifier_input_value(modifier, socket_name, value):
 
 def ensure_modifier_socket_defaults(modifier):
     """Materialize missing socket keys from node group defaults."""
-    # Blender 5.2+ creates every input with its default already
     if modifier is None or modifier.node_group is None or USES_INPUT_STRUCTS:
         return
     for item in modifier.node_group.interface.items_tree:
@@ -458,12 +561,22 @@ def _wire_vertex_ground(modifier, target_ground):
         _write_socket_value(modifier, socket, target_ground)
 
 
+def wire_ao_ground(modifier, target_ground):
+    """Point the AO mask at the target ground and its baked color attribute."""
+    if target_ground is None or modifier is None or modifier.node_group is None:
+        return
+    for socket_name, value in (("Object", target_ground), ("Attribute", AO_ATTRIBUTE_NAME)):
+        socket = find_input_socket(modifier.node_group, socket_name)
+        if socket is not None:
+            _write_socket_value(modifier, socket, value)
+
+
 def get_effector_node_group(effector_type):
     """Append and return the node group registered for an effector type."""
     group_name = EFFECTOR_NODE_GROUPS.get(effector_type)
     if group_name is None:
         return None
-    return _append_node_group(group_name)
+    return _link_node_group(group_name)
 
 
 def append_effector_to_stack(curve_obj, effector_type, modifier_name, target_ground=None):
@@ -478,6 +591,8 @@ def append_effector_to_stack(curve_obj, effector_type, modifier_name, target_gro
         _wire_texture_uv(modifier, target_ground)
     elif effector_type == 'MASK_BY_ATTRIBUTE':
         _wire_vertex_ground(modifier, target_ground)
+    elif effector_type == 'MASK_BY_AO':
+        wire_ao_ground(modifier, target_ground)
     _move_modifier(
         curve_obj, modifier,
         _cap_before_instances(curve_obj, _effector_block_base(curve_obj)),
@@ -542,20 +657,19 @@ def resync_effector_modifier_links(system):
 
 
 #----INSTANCES MODIFIERS----
-def _add_instances_modifier(curve_obj, group_name, pin_fake_user):
+def _add_instances_modifier(curve_obj, group_name):
     """Create an instances modifier directly below the effector block."""
-    node_group = _append_node_group(group_name)
-    if pin_fake_user:
-        node_group.use_fake_user = True
+    node_group = _link_node_group(group_name)
     modifier = curve_obj.modifiers.new(name=group_name, type='NODES')
     modifier.node_group = node_group
     ensure_modifier_socket_defaults(modifier)
     _move_modifier(curve_obj, modifier, _effector_block_end(curve_obj))
+    _keep_animation_last(curve_obj)
     return modifier
 
 
 def _remove_instances_modifier(curve_obj, group_name):
-    """Remove an instances modifier and keep its node group resident."""
+    """Remove an instances modifier."""
     modifier = find_modifier_by_node_group(curve_obj, group_name)
     if modifier is None:
         return False
@@ -579,7 +693,7 @@ def _apply_instances_assignment(system, group_name, mode, obj, collection):
 
 def add_instances_modifier(curve_obj):
     """Create the procedural instances modifier below the effector block."""
-    return _add_instances_modifier(curve_obj, INSTANCES_NODE_GROUP_NAME, pin_fake_user=False)
+    return _add_instances_modifier(curve_obj, INSTANCES_NODE_GROUP_NAME)
 
 
 def remove_instances_modifier(curve_obj):
@@ -599,7 +713,7 @@ def apply_instances_assignment(system):
 
 def add_manual_instances_modifier(curve_obj):
     """Create the manual instances modifier below the effector block."""
-    return _add_instances_modifier(curve_obj, MANUAL_INSTANCES_NODE_GROUP_NAME, pin_fake_user=True)
+    return _add_instances_modifier(curve_obj, MANUAL_INSTANCES_NODE_GROUP_NAME)
 
 
 def remove_manual_instances_modifier(curve_obj):
@@ -619,19 +733,108 @@ def apply_manual_instances_assignment(system):
     )
 
 
+#----ANIMATION MODIFIERS----
+def get_system_instances_modifier(system):
+    """The instances modifier of a system of either type."""
+    if system is None:
+        return None
+    if system.system_type == 'MANUAL':
+        return get_manual_instances_modifier(system)
+    return get_instances_modifier(system)
+
+
+def get_wind_modifier(system):
+    if system is None or system.curve_obj is None:
+        return None
+    return find_modifier_by_node_group(system.curve_obj, WIND_NODE_GROUP_NAME)
+
+
+def _keep_animation_last(curve_obj):
+    """Animation acts on the finished instances, so it sits right below the instances modifier
+    (Blender 5.2 keeps its own Hair Dynamics modifier at the very end)."""
+    modifier = find_modifier_by_node_group(curve_obj, WIND_NODE_GROUP_NAME)
+    if modifier is None:
+        return
+    for group_name in (INSTANCES_NODE_GROUP_NAME, MANUAL_INSTANCES_NODE_GROUP_NAME):
+        instances = find_modifier_by_node_group(curve_obj, group_name)
+        if instances is not None:
+            target = curve_obj.modifiers.find(instances.name)
+            if curve_obj.modifiers.find(modifier.name) < target:
+                target -= 1
+            _move_modifier(curve_obj, modifier, target + 1)
+            return
+    _move_modifier(curve_obj, modifier, len(curve_obj.modifiers) - 1)
+
+
+def enable_wind(system):
+    """Add the wind modifier; Random Rotation and Align Surface are overridden and their values
+    kept on the system for disable_wind(). Return the modifier, or None without instances."""
+    instances = get_system_instances_modifier(system)
+    if instances is None or get_wind_modifier(system) is not None:
+        return None
+    system.wind_saved_rotation = tuple(
+        get_modifier_input_value(instances, "Random Rotation", (0.0, 0.0, 0.0))
+    )
+    system.wind_saved_align = bool(get_modifier_input_value(instances, "Align Surface", False))
+    set_modifier_input_value(instances, "Random Rotation", (0.0, 0.0, 0.0))
+    set_modifier_input_value(instances, "Align Surface", False)
+    curve_obj = system.curve_obj
+    modifier = curve_obj.modifiers.new(name=WIND_NODE_GROUP_NAME, type='NODES')
+    modifier.node_group = _link_node_group(WIND_NODE_GROUP_NAME)
+    ensure_modifier_socket_defaults(modifier)
+    reset_wind(modifier)
+    _keep_animation_last(curve_obj)
+    return modifier
+
+
+def reset_wind(modifier):
+    """Write the node group's own default into every wind setting."""
+    for socket_name in WIND_SOCKETS:
+        socket = find_input_socket(modifier.node_group, socket_name)
+        if socket is not None:
+            set_modifier_input_value(modifier, socket_name, socket.default_value)
+
+
+def read_wind_settings(modifier):
+    """The wind settings as plain values, for the wind clipboard."""
+    settings = {}
+    for socket_name in WIND_SOCKETS:
+        value = get_modifier_input_value(modifier, socket_name)
+        if isinstance(value, (bool, int, float)):
+            settings[socket_name] = value
+    return settings
+
+
+def write_wind_settings(modifier, settings):
+    for socket_name in WIND_SOCKETS:
+        if socket_name in settings:
+            set_modifier_input_value(modifier, socket_name, settings[socket_name])
+
+
+def disable_wind(system):
+    """Remove the wind modifier and give the instances their own rotation values back."""
+    modifier = get_wind_modifier(system)
+    if modifier is None:
+        return False
+    system.curve_obj.modifiers.remove(modifier)
+    instances = get_system_instances_modifier(system)
+    set_modifier_input_value(instances, "Random Rotation", tuple(system.wind_saved_rotation))
+    set_modifier_input_value(instances, "Align Surface", system.wind_saved_align)
+    return True
+
+
 #----SYSTEM SETUP----
 def setup_system_modifier_stack(curve_obj, system_type, target_ground):
     """Create the points-stage modifier for a system and wire its target."""
     _deduplicate_surface_deform(curve_obj)
     if system_type == 'MANUAL':
-        node_group = _append_node_group(MANUAL_POINTS_NODE_GROUP_NAME)
+        node_group = _link_node_group(MANUAL_POINTS_NODE_GROUP_NAME)
         modifier = curve_obj.modifiers.new(name=MANUAL_POINTS_NODE_GROUP_NAME, type='NODES')
         modifier.node_group = node_group
         ensure_modifier_socket_defaults(modifier)
         return modifier
-    node_groups = _append_node_groups([PROCEDURAL_NODE_GROUP_NAME, INSTANCES_NODE_GROUP_NAME])
+    node_groups = _link_node_groups([PROCEDURAL_NODE_GROUP_NAME, INSTANCES_NODE_GROUP_NAME])
     node_group = node_groups[PROCEDURAL_NODE_GROUP_NAME]
-    node_groups[INSTANCES_NODE_GROUP_NAME].use_fake_user = True
     modifier = curve_obj.modifiers.new(name=PROCEDURAL_NODE_GROUP_NAME, type='NODES')
     modifier.node_group = node_group
     ensure_modifier_socket_defaults(modifier)
@@ -648,45 +851,3 @@ def duplicate_system_curve(curve_obj):
     for collection in curve_obj.users_collection:
         collection.objects.link(new_obj)
     return new_obj
-
-
-#----RESYNC----
-def resync_node_groups_from_library():
-    """Re-append library node groups and re-point existing modifiers."""
-    names = [
-        PROCEDURAL_NODE_GROUP_NAME, INSTANCES_NODE_GROUP_NAME, MANUAL_POINTS_NODE_GROUP_NAME,
-    ]
-    names += list(EFFECTOR_NODE_GROUPS.values())
-    names.append(MANUAL_INSTANCES_NODE_GROUP_NAME)
-    old = {}
-    for name in names:
-        existing = bpy.data.node_groups.get(name)
-        if existing is not None:
-            old[name] = existing
-            existing.name = f"{name}.old"
-    try:
-        with bpy.data.libraries.load(_NODE_GROUPS_BLEND, link=False) as (data_from, data_to):
-            missing = [name for name in names if name not in data_from.node_groups]
-            if missing:
-                raise RuntimeError(f"Node group(s) {missing} not found in {_NODE_GROUPS_BLEND}")
-            data_to.node_groups = list(names)
-    except Exception:
-        for name, group in old.items():
-            group.name = name
-        raise
-    fresh = dict(zip(names, data_to.node_groups))
-    fresh[INSTANCES_NODE_GROUP_NAME].use_fake_user = True
-    fresh[MANUAL_INSTANCES_NODE_GROUP_NAME].use_fake_user = True
-    for obj in bpy.data.objects:
-        for modifier in obj.modifiers:
-            if modifier.type != 'NODES' or modifier.node_group is None:
-                continue
-            for base_name, old_group in old.items():
-                if modifier.node_group == old_group:
-                    modifier.node_group = fresh[base_name]
-                    ensure_modifier_socket_defaults(modifier)
-    for old_group in old.values():
-        old_group.use_fake_user = False
-        if old_group.users == 0:
-            bpy.data.node_groups.remove(old_group)
-    return True

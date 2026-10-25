@@ -72,7 +72,6 @@ def capture_viewport(context, target_path, size=THUMBNAIL_SIZE):
         image_settings.file_format = 'PNG'
         image_settings.color_mode = 'RGBA'
         image_settings.color_depth = '8'
-        # the viewport render draws grid, gizmos and helpers unless overlays are off
         overlay.show_overlays = False
         with context.temp_override(window=window, area=area, region=region):
             bpy.ops.render.opengl(view_context=True)

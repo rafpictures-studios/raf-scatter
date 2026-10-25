@@ -11,9 +11,11 @@
 - **Paint Mode** — five scatter brushes (Add, Density, Grow, Delete, Slide) with a ground-hugging ring cursor and an on-screen HUD.
 - **Procedural Mode** — automatic distribution with Density, Distance Min and Seed.
 - **Instances** — any object or collection, with random scale, rotation and offset; import straight from the Asset Browser.
-- **Masks** — Texture, Position, Slope, Proximity and Vertex Group, each with optional Edge Blend.
+- **Masks** — Texture, Position, Slope, Proximity, Vertex Group and baked Ambient Occlusion, most with optional Edge Blend.
+- **Animation** — Wind for the instances, with Reset and Copy / Paste between systems.
 - **Biomes** — save every scatter system of a ground as one preset and load it onto any other ground.
 - **Biome Packs** (`.rafpack`) — bundle biomes with all their meshes, materials and textures into one file you can share or sell.
+- **Sharing** — Make Node Groups Local sends a `.blend` file to someone without the add-on.
 
 ## Install
 

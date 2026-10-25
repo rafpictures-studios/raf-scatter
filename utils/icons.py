@@ -15,7 +15,6 @@ _GEOM_RANGE = 255
 _GEOM_PADDING = 0.06
 _GEOM_MIN_ALPHA = 8
 _GEOM_COLOR_STEP = 8
-# same header as Blender's own datafiles/icons/*.dat: magic, version 0, 255 x 255 range
 _GEOM_HEADER = b"VCO\x00" + bytes((_GEOM_RANGE, _GEOM_RANGE, 0, 0))
 _TOOLBAR_ICON_SUBDIR = "raf_scatter/toolbar_icons"
 _icon_collections = {}
@@ -116,7 +115,6 @@ def get_toolbar_icon_handle(name):
     coords, colors = _triangle_data(preview)
     if not coords:
         return None
-    # rewritten once per Blender session so an edited PNG is always picked up
     with open(handle + ".dat", "wb") as handle_file:
         handle_file.write(_GEOM_HEADER + coords + colors)
     _toolbar_icon_handles[name] = handle
@@ -129,6 +127,11 @@ def get_builtin_icon_value(name):
     return items[name].value if name in items else 0
 
 
+def get_biome_logo_value():
+    """Return the icon_value of the biome logo, or of a built-in stand-in when it is missing."""
+    return get_menu_icon_id("biome") or get_builtin_icon_value('ASSET_MANAGER')
+
+
 #----BIOME PREVIEWS----
 def reload_biome_previews(biomes):
     """Point each biome at the preview of its thumbnail, loading only new or changed files."""
@@ -139,7 +142,6 @@ def reload_biome_previews(biomes):
     for key, thumbnail_path in biomes:
         if thumbnail_path is None or not os.path.isfile(thumbnail_path):
             continue
-        # a changed file gets a new preview: freeing one the UI still draws corrupts memory
         preview_key = f"{os.path.normcase(thumbnail_path)}|{os.path.getmtime(thumbnail_path)}"
         if preview_key not in pcoll:
             pcoll.load(preview_key, thumbnail_path, "IMAGE")

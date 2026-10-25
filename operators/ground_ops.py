@@ -50,6 +50,15 @@ def _is_already_ground(scene, obj):
     return False
 
 
+def _selected_new_grounds(context):
+    """Selected mesh objects that are not a target ground yet."""
+    scene = context.scene
+    return [
+        obj for obj in (context.selected_objects or ())
+        if obj.type == 'MESH' and not _is_already_ground(scene, obj)
+    ]
+
+
 def _add_ground(context, obj):
     """Register an object as a target ground."""
     scene = context.scene
@@ -94,18 +103,23 @@ class SCATTER_OT_add_ground_popup(Operator):
 class SCATTER_OT_add_ground_from_selected(Operator):
     bl_idname = "scatter.add_ground_from_selected"
     bl_label = "Add Selected as Ground"
-    bl_description = "Add the currently active mesh object as a Target Ground"
+    bl_description = (
+        "Add every selected (outlined) mesh object as a Target Ground; "
+        "an active object that is not selected is ignored"
+    )
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH':
-            return False
-        return not _is_already_ground(context.scene, obj)
+        return bool(_selected_new_grounds(context))
 
     def execute(self, context):
-        _add_ground(context, context.active_object)
+        objects = _selected_new_grounds(context)
+        objects.sort(key=lambda obj: obj == context.active_object)
+        for obj in objects:
+            _add_ground(context, obj)
+        names = ", ".join(f"'{obj.name}'" for obj in reversed(objects))
+        self.report({'INFO'}, f"Added {names} as Target Ground")
         return {'FINISHED'}
 
 
@@ -272,7 +286,6 @@ def _watch_deleted_grounds(scene, depsgraph):
     """Catch ground meshes deleted by any route the delete guard does not see."""
     lost = any(g.target_object is None for s in bpy.data.scenes for g in s.scatter_grounds)
     if lost and not bpy.app.timers.is_registered(_clean_deleted_grounds):
-        # objects cannot be removed while the depsgraph is being updated
         bpy.app.timers.register(_clean_deleted_grounds, first_interval=0.0)
 
 

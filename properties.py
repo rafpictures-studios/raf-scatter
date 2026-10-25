@@ -3,12 +3,14 @@ import re
 
 import bpy
 from bpy.props import (
-    BoolProperty, CollectionProperty, EnumProperty,
+    BoolProperty, CollectionProperty, EnumProperty, FloatVectorProperty,
     IntProperty, PointerProperty, StringProperty,
 )
+from bpy.app.handlers import persistent
 from bpy.types import PropertyGroup
 
 from .utils import brushes as brush_utils, geonodes as geonodes_utils, icons as icon_utils
+from .utils import colors as color_utils
 
 
 #----TYPE CONSTANTS----
@@ -18,6 +20,7 @@ EFFECTOR_TYPE_ITEMS = (
     ('MASK_BY_NORMAL', "Slope Mask", "Based on surface normal", 'NORMALS_FACE', 2),
     ('GEOMETRY_PROXIMITY', "Proximity Mask", "By object or by collection", 'CON_DISTLIMIT', 3),
     ('MASK_BY_ATTRIBUTE', "Vertex Mask", "Weight paint or color attribute", 'GROUP_VCOL', 4),
+    ('MASK_BY_AO', "AO Mask", "Ambient occlusion baked on the ground", 'SHADING_RENDERED', 5),
 )
 EFFECTOR_TYPE_ICONS = {identifier: icon for identifier, _, _, icon, _ in EFFECTOR_TYPE_ITEMS}
 EFFECTOR_TYPE_LABELS = {identifier: name for identifier, name, _, _, _ in EFFECTOR_TYPE_ITEMS}
@@ -27,6 +30,7 @@ EFFECTOR_ICON_NAMES = {
     'MASK_BY_NORMAL': "slope_mask",
     'GEOMETRY_PROXIMITY': "proximity_mask",
     'MASK_BY_ATTRIBUTE': "vertex_mask",
+    'MASK_BY_AO': "ambientOcclusion_mask",
 }
 PROCEDURAL_ONLY_EFFECTORS = {'MASK_BY_NORMAL', 'MASK_BY_ATTRIBUTE'}
 SYSTEM_AUTO_NAME_SUFFIX = "_scatter"
@@ -247,6 +251,22 @@ def _on_system_name_update(self, context):
         self.name = self.curve_obj.name
 
 
+@persistent
+def _relink_node_groups_after_load(_dummy):
+    """A file saved by another RAF Scatter install links its node_groups.blend; use this one.
+    Systems from before the colour tags get one."""
+    geonodes_utils.relink_node_groups_library()
+    for scene in bpy.data.scenes:
+        color_utils.assign_missing_colors(scene)
+
+
+def _color_open_file():
+    """The add-on was enabled with a file open: colour its systems once."""
+    for scene in bpy.data.scenes:
+        color_utils.assign_missing_colors(scene)
+    return None
+
+
 def _sync_curve_renames(scene, depsgraph):
     """Sync outside ground and curve renames and heal modifier socket keys."""
     for ground in scene.scatter_grounds:
@@ -340,6 +360,13 @@ class SCATTER_SystemItem(PropertyGroup):
         update=_on_manual_instances_collection_update,
     )
     manual_instances_mode: IntProperty(name="Instances mode", default=0, min=0, max=1)
+    color: FloatVectorProperty(
+        name="Color", description="Colour tag of the system in the list",
+        subtype='COLOR_GAMMA', size=3, min=0.0, max=1.0, default=(0.5, 0.5, 0.5),
+    )
+    has_color: BoolProperty(options={'HIDDEN'})
+    wind_saved_rotation: FloatVectorProperty(name="Random Rotation before wind", size=3)
+    wind_saved_align: BoolProperty(name="Align Surface before wind")
     effectors: CollectionProperty(type=SCATTER_EffectorItem)
     active_effector_index: IntProperty(default=0, update=_on_active_effector_index_update)
 
@@ -376,19 +403,29 @@ def register():
     bpy.types.Scene.scatter_effector_clipboard = StringProperty(
         name="Mask clipboard", default="", options={'HIDDEN'},
     )
+    bpy.types.Scene.scatter_wind_clipboard = StringProperty(
+        name="Wind clipboard", default="", options={'HIDDEN'},
+    )
     bpy.types.Scene.scatter_paint_ui_saved = BoolProperty(default=False)
     bpy.types.Scene.scatter_paint_curve_obj = PointerProperty(
         name="Painting curve object", type=bpy.types.Object,
     )
     bpy.app.handlers.depsgraph_update_post.append(_sync_curve_renames)
+    bpy.app.handlers.load_post.append(_relink_node_groups_after_load)
+    bpy.app.timers.register(_color_open_file, first_interval=0.0)
 
 
 def unregister():
     """Unregister property classes and remove scene properties."""
+    if bpy.app.timers.is_registered(_color_open_file):
+        bpy.app.timers.unregister(_color_open_file)
+    if _relink_node_groups_after_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_relink_node_groups_after_load)
     if _sync_curve_renames in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_sync_curve_renames)
     del bpy.types.Scene.scatter_paint_curve_obj
     del bpy.types.Scene.scatter_paint_ui_saved
+    del bpy.types.Scene.scatter_wind_clipboard
     del bpy.types.Scene.scatter_effector_clipboard
     del bpy.types.Scene.scatter_active_brush
     del bpy.types.Scene.scatter_effector_search

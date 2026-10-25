@@ -1,7 +1,9 @@
 """Biome library state and operators for browsing, saving, loading and managing biomes."""
 import bpy
 from bpy.app.handlers import persistent
-from bpy.props import BoolProperty, CollectionProperty, EnumProperty, IntProperty, StringProperty
+from bpy.props import (
+    BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, StringProperty,
+)
 from bpy.types import Operator, PropertyGroup
 
 from . import library_ops
@@ -79,64 +81,12 @@ def refresh_biome_library(context=None, select=None):
     if select in keys:
         wm.scatter_active_biome_index = keys.index(select)
     wm.scatter_active_biome_index = min(wm.scatter_active_biome_index, max(len(keys) - 1, 0))
-    _refresh_rows(wm, packs)
-
-
-def _add_row(rows, kind, label, biome_index=-1, pack_id="", detail=""):
-    row = rows.add()
-    row.name = label
-    row.kind = kind
-    row.biome_index = biome_index
-    row.pack_id = pack_id
-    row.detail = detail
-
-
-def _refresh_rows(wm, packs):
-    """Rebuild the grouped Preferences list: My Biomes first, then one group per pack."""
-    rows = wm.scatter_biome_rows
-    rows.clear()
-    local = [i for i, item in enumerate(wm.scatter_biomes) if not item.pack_id]
-    _add_row(rows, 'HEADER_LOCAL', "My Biomes", detail=f"{len(local)} biome(s)")
-    for index in local:
-        _add_row(rows, 'BIOME', wm.scatter_biomes[index].label, index)
-    if not local:
-        _add_row(rows, 'EMPTY', "No biomes saved yet")
-    for pack in packs:
-        parts = [f"v{pack['version']}"] if pack["version"] else []
-        parts += [pack["author"]] if pack["author"] else []
-        parts.append(f"{len(pack['biomes'])} biome(s)")
-        _add_row(rows, 'HEADER_PACK', pack["name"], pack_id=pack["id"], detail="  ·  ".join(parts))
-        for index, item in enumerate(wm.scatter_biomes):
-            if item.pack_id == pack["id"]:
-                _add_row(rows, 'BIOME', item.label, index, pack["id"])
-    select_biome_row(wm)
-
-
-def select_biome_row(wm):
-    """Point the grouped list at the row of the active biome."""
-    for index, row in enumerate(wm.scatter_biome_rows):
-        if row.kind == 'BIOME' and row.biome_index == wm.scatter_active_biome_index:
-            if wm.scatter_active_biome_row != index:
-                wm.scatter_active_biome_row = index
-            return
-
-
-def get_active_biome_row(wm):
-    rows = wm.scatter_biome_rows
-    index = wm.scatter_active_biome_row
-    return rows[index] if 0 <= index < len(rows) else None
-
-
-def _on_active_biome_row_update(self, context):
-    row = get_active_biome_row(self)
-    if row is not None and row.kind == 'BIOME' and 0 <= row.biome_index < len(self.scatter_biomes):
-        self.scatter_active_biome_index = row.biome_index
 
 
 def _biome_pick_items(self, context):
     """Enum items for the biome picker: one preview per listed biome."""
     _biome_pick_cache.clear()
-    fallback = icon_utils.get_builtin_icon_value('ASSET_MANAGER')
+    fallback = icon_utils.get_biome_logo_value()
     prefs = get_addon_prefs(context)
     for index, item in enumerate(context.window_manager.scatter_biomes):
         if not item.valid or (prefs is not None and not is_biome_in_group(item, prefs.biome_group)):
@@ -270,6 +220,17 @@ def _apply_instances(system, block, scene, pack_root, unresolved):
     biomes_utils.apply_sockets(modifier, block.get("sockets", {}))
 
 
+def _apply_animation(system, block):
+    wind = block.get("wind")
+    if not isinstance(wind, dict) or geonodes_utils.enable_wind(system) is None:
+        return
+    biomes_utils.apply_sockets(geonodes_utils.get_wind_modifier(system), wind.get("sockets", {}))
+    rotation = wind.get("saved_rotation")
+    if isinstance(rotation, list) and len(rotation) == 3:
+        system.wind_saved_rotation = rotation
+    system.wind_saved_align = bool(wind.get("saved_align", False))
+
+
 def _apply_system(context, ground, entry, pack_root, skipped, unresolved):
     """Create one stored system on the ground with its distribution, instances and effectors."""
     scene = context.scene
@@ -282,6 +243,7 @@ def _apply_system(context, ground, entry, pack_root, skipped, unresolved):
     )
     if entry.get("instances"):
         _apply_instances(system, entry["instances"], scene, pack_root, unresolved)
+    _apply_animation(system, entry.get("animation", {}))
     for effector_entry in reversed(entry.get("effectors", [])):
         effector_type = effector_entry["type"]
         label = EFFECTOR_TYPE_LABELS.get(effector_type, effector_type)
@@ -303,35 +265,69 @@ def _apply_system(context, ground, entry, pack_root, skipped, unresolved):
     system.curve_obj.hide_render = bool(entry.get("hide_render", False))
 
 
-def _load_biome(operator, context, biome_key):
-    """Add every system of a saved or pack biome to the active ground and report one summary."""
+def _tag_redraw_viewport(context):
+    for area in context.screen.areas:
+        if area.type == 'VIEW_3D':
+            area.tag_redraw()
+
+
+class _BiomeLoad:
+    """A biome load split into one step per system, so a modal operator can show progress."""
+
+    def __init__(self, ground, data, pack_root, biome_name):
+        self.ground = ground
+        self.entries = list(reversed(data["systems"]))
+        self.pack_root = pack_root
+        self.biome_name = biome_name
+        self.done = 0
+        self.skipped = []
+        self.unresolved = []
+
+    @property
+    def total(self):
+        return len(self.entries)
+
+    @property
+    def finished(self):
+        return self.done >= self.total
+
+    def step(self, context):
+        _apply_system(
+            context, self.ground, self.entries[self.done], self.pack_root,
+            self.skipped, self.unresolved,
+        )
+        self.done += 1
+
+    def report(self, operator, context):
+        self.ground.active_scatter_system_index = 0
+        context.view_layer.update()
+        message = f"Loaded biome \"{self.biome_name}\": {self.done} system(s)"
+        if not self.finished:
+            message += f" of {self.total} (stopped)"
+        if self.skipped:
+            message += f"; skipped masks: {', '.join(self.skipped)}"
+        if self.unresolved:
+            message += f"; left empty: {', '.join(sorted(set(self.unresolved)))}"
+        warn = self.skipped or self.unresolved or not self.finished
+        operator.report({'WARNING'} if warn else {'INFO'}, message)
+
+
+def _start_biome_load(operator, context, biome_key):
+    """Read a saved or pack biome for the active ground; None (and a report) when it cannot."""
     ground = _get_active_ground(context)
     if ground is None or ground.target_object is None:
         operator.report({'ERROR'}, "Active ground has no target object")
-        return {'CANCELLED'}
+        return None
     if not biome_key:
         operator.report({'WARNING'}, "No biome selected")
-        return {'CANCELLED'}
+        return None
     biome_name = biomes_utils.split_biome_key(biome_key)[1]
     try:
         data = biomes_utils.read_biome(biome_key)
     except ValueError as error:
         operator.report({'ERROR'}, f"Could not load biome \"{biome_name}\": {error}")
-        return {'CANCELLED'}
-    pack_root = biomes_utils.get_pack_root(biome_key)
-    skipped = []
-    unresolved = []
-    for entry in reversed(data["systems"]):
-        _apply_system(context, ground, entry, pack_root, skipped, unresolved)
-    ground.active_scatter_system_index = 0
-    context.view_layer.update()
-    message = f"Loaded biome \"{biome_name}\": {len(data['systems'])} system(s)"
-    if skipped:
-        message += f"; skipped masks: {', '.join(skipped)}"
-    if unresolved:
-        message += f"; left empty: {', '.join(sorted(set(unresolved)))}"
-    operator.report({'WARNING'} if skipped or unresolved else {'INFO'}, message)
-    return {'FINISHED'}
+        return None
+    return _BiomeLoad(ground, data, biomes_utils.get_pack_root(biome_key), biome_name)
 
 
 #----BIOME LIBRARY STATE----
@@ -351,18 +347,6 @@ class SCATTER_BiomeItem(PropertyGroup):
     valid: BoolProperty(name="Valid", default=True)
 
 
-class SCATTER_BiomeRow(PropertyGroup):
-    """One row of the grouped biome list in the Preferences: a group header or a biome."""
-    name: StringProperty(name="Label")
-    kind: EnumProperty(items=(
-        ('HEADER_LOCAL', "My Biomes", ""), ('HEADER_PACK', "Pack", ""),
-        ('BIOME', "Biome", ""), ('EMPTY', "Empty", ""),
-    ))
-    biome_index: IntProperty(default=-1)
-    pack_id: StringProperty(name="Pack folder")
-    detail: StringProperty(name="Detail")
-
-
 class SCATTER_PackItem(PropertyGroup):
     """One installed biome pack as listed by the biome library."""
     name: StringProperty(name="Folder")
@@ -379,7 +363,6 @@ class SCATTER_OT_open_biome_browser(Operator):
     bl_idname = "scatter.open_biome_browser"
     bl_label = "Scatter Biomes"
     bl_description = "Pick a saved biome by its preview and load it into the active ground"
-    bl_options = {'UNDO'}
 
     @classmethod
     def poll(cls, context):
@@ -388,7 +371,6 @@ class SCATTER_OT_open_biome_browser(Operator):
     def invoke(self, context, event):
         refresh_biome_library(context)
         sync_biome_selection(context)
-        # a dialog stays open while a preview is picked and closes on Load
         return context.window_manager.invoke_props_dialog(
             self, width=_BROWSER_WIDTH, title="Scatter Biomes", confirm_text="Load Biome",
         )
@@ -423,7 +405,9 @@ class SCATTER_OT_open_biome_browser(Operator):
             info.label(text=line)
 
     def execute(self, context):
-        return _load_biome(self, context, context.window_manager.scatter_biome_pick)
+        biome_key = context.window_manager.scatter_biome_pick
+        bpy.ops.scatter.load_biome('INVOKE_DEFAULT', biome_name=biome_key)
+        return {'FINISHED'}
 
 
 class SCATTER_OT_save_biome(Operator):
@@ -526,8 +510,57 @@ class SCATTER_OT_load_biome(Operator):
         lines.append("Click to add these systems to the active ground")
         return "\n".join(lines)
 
+    _load = None
+    _timer = None
+    _drawn = False
+
     def execute(self, context):
-        return _load_biome(self, context, self.biome_name)
+        load = _start_biome_load(self, context, self.biome_name)
+        if load is None:
+            return {'CANCELLED'}
+        while not load.finished:
+            load.step(context)
+        load.report(self, context)
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        self._load = _start_biome_load(self, context, self.biome_name)
+        if self._load is None:
+            return {'CANCELLED'}
+        wm = context.window_manager
+        wm.scatter_biome_load_name = self._load.biome_name
+        wm.scatter_biome_load_progress = 0.0
+        self._drawn = False
+        self._timer = wm.event_timer_add(0.01, window=context.window)
+        wm.modal_handler_add(self)
+        context.workspace.status_text_set(f"Loading biome {self._load.biome_name}…  Esc: stop")
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            return self._end(context)
+        if event.type != 'TIMER':
+            return {'RUNNING_MODAL'}
+        if not self._drawn:
+            self._drawn = True
+            _tag_redraw_viewport(context)
+            return {'RUNNING_MODAL'}
+        self._load.step(context)
+        context.window_manager.scatter_biome_load_progress = self._load.done / self._load.total
+        _tag_redraw_viewport(context)
+        if not self._load.finished:
+            return {'RUNNING_MODAL'}
+        return self._end(context)
+
+    def _end(self, context):
+        wm = context.window_manager
+        wm.event_timer_remove(self._timer)
+        wm.scatter_biome_load_name = ""
+        wm.scatter_biome_load_progress = 0.0
+        context.workspace.status_text_set(None)
+        self._load.report(self, context)
+        _tag_redraw_viewport(context)
+        return {'FINISHED'} if self._load.done else {'CANCELLED'}
 
 
 class SCATTER_OT_refresh_biomes(Operator):
@@ -652,7 +685,6 @@ class SCATTER_OT_open_biome_preferences(Operator):
 
 classes = (
     SCATTER_BiomeItem,
-    SCATTER_BiomeRow,
     SCATTER_PackItem,
     SCATTER_OT_open_biome_browser,
     SCATTER_OT_save_biome,
@@ -670,13 +702,13 @@ classes = (
 def register():
     bpy.types.WindowManager.scatter_biomes = CollectionProperty(type=SCATTER_BiomeItem)
     bpy.types.WindowManager.scatter_packs = CollectionProperty(type=SCATTER_PackItem)
-    bpy.types.WindowManager.scatter_biome_rows = CollectionProperty(type=SCATTER_BiomeRow)
-    bpy.types.WindowManager.scatter_active_biome_row = IntProperty(
-        default=0, update=_on_active_biome_row_update,
-    )
     bpy.types.WindowManager.scatter_active_biome_index = IntProperty(default=0)
     bpy.types.WindowManager.scatter_biome_pick = EnumProperty(
         name="Biome", description="Select the biome to load", items=_biome_pick_items,
+    )
+    bpy.types.WindowManager.scatter_biome_load_name = StringProperty(options={'SKIP_SAVE'})
+    bpy.types.WindowManager.scatter_biome_load_progress = FloatProperty(
+        name="Load Progress", subtype='FACTOR', min=0.0, max=1.0, options={'SKIP_SAVE'},
     )
     bpy.app.timers.register(_deferred_refresh, first_interval=0.5)
     bpy.app.handlers.load_post.append(_refresh_after_load)
@@ -687,9 +719,9 @@ def unregister():
         bpy.app.handlers.load_post.remove(_refresh_after_load)
     if bpy.app.timers.is_registered(_deferred_refresh):
         bpy.app.timers.unregister(_deferred_refresh)
+    del bpy.types.WindowManager.scatter_biome_load_progress
+    del bpy.types.WindowManager.scatter_biome_load_name
     del bpy.types.WindowManager.scatter_biome_pick
     del bpy.types.WindowManager.scatter_active_biome_index
-    del bpy.types.WindowManager.scatter_active_biome_row
-    del bpy.types.WindowManager.scatter_biome_rows
     del bpy.types.WindowManager.scatter_packs
     del bpy.types.WindowManager.scatter_biomes

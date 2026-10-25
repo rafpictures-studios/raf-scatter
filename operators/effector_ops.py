@@ -2,12 +2,14 @@
 import time
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
 from bpy.types import Operator
 
 from ..properties import (
     EFFECTOR_TYPE_ITEMS, EFFECTOR_TYPE_LABELS, PROCEDURAL_ONLY_EFFECTORS, VERTEX_MASK_GROUP_PREFIX,
 )
+from .brush_ops import is_paint_session_active
+from ..utils import bake as bake_utils
 from ..utils import biomes as biomes_utils
 from ..utils import geonodes as geonodes_utils
 
@@ -47,7 +49,6 @@ def _tag_redraw_viewport(context):
 
 def _force_scene_update(context):
     """Re-evaluate the depsgraph synchronously."""
-    # some builds skip GN re-evaluation after IDProp socket writes even when tagged
     context.view_layer.update()
 
 
@@ -286,7 +287,7 @@ class SCATTER_OT_copy_effectors(Operator):
 class SCATTER_OT_paste_effectors(Operator):
     bl_idname = "scatter.paste_effectors"
     bl_label = "Paste Masks"
-    bl_description = "Add the copied masks on top of the active system's mask stack"
+    bl_description = "Add the copied masks on top of another system's mask stack"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -294,7 +295,8 @@ class SCATTER_OT_paste_effectors(Operator):
         system = _get_active_system(context)
         if system is None or system.curve_obj is None:
             return False
-        return biomes_utils.read_effector_clipboard(context.scene.scatter_effector_clipboard) is not None
+        clipboard = biomes_utils.read_effector_clipboard(context.scene.scatter_effector_clipboard)
+        return clipboard is not None and clipboard.get("source_curve") != system.curve_obj.name
 
     @classmethod
     def description(cls, context, properties):
@@ -539,7 +541,6 @@ class SCATTER_OT_start_vertex_paint(Operator):
         group = ground.vertex_groups.get(group_name)
         if group is None:
             group = ground.vertex_groups.new(name=group_name)
-        # 'active' lives on the vertex_groups collection, not on each VertexGroup
         ground.vertex_groups.active = group
         if ground.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -551,6 +552,111 @@ class SCATTER_OT_start_vertex_paint(Operator):
         effector.vertex_mode = 0
         effector.vertex_group_name = group_name
         return {'FINISHED'}
+
+
+class SCATTER_OT_bake_ao(Operator):
+    bl_idname = "scatter.bake_ao"
+    bl_label = "Bake AO"
+    bl_description = (
+        "Bake ambient occlusion of the Target Ground into its colorAO_id color attribute "
+        "with Cycles; the AO mask reads it. Esc cancels"
+    )
+    bl_options = {'REGISTER', 'UNDO'}
+
+    _bake = None
+    _timer = None
+    _drawn = False
+
+    @classmethod
+    def poll(cls, context):
+        system, effector = _get_active_effector(context)
+        return (
+            effector is not None and effector.effector_type == 'MASK_BY_AO'
+            and system.target_ground is not None
+            and not context.window_manager.scatter_ao_bake_ground
+        )
+
+    def _refuse(self, context):
+        if is_paint_session_active(context.scene):
+            self.report({'WARNING'}, "Stop painting first")
+            return True
+        if context.mode != 'OBJECT':
+            self.report({'WARNING'}, "Switch to Object Mode first")
+            return True
+        return False
+
+    def _done(self, context, system, effector):
+        ground = system.target_ground
+        geonodes_utils.wire_ao_ground(geonodes_utils.get_effector_modifier(system, effector), ground)
+        _force_scene_update(context)
+        _tag_redraw_viewport(context)
+        self.report({'INFO'}, f"Baked ambient occlusion on '{ground.name}'")
+        return {'FINISHED'}
+
+    def execute(self, context):
+        system, effector = _get_active_effector(context)
+        if self._refuse(context):
+            return {'CANCELLED'}
+        error = bake_utils.bake_ground_ao(context, system.target_ground)
+        if error is not None:
+            self.report({'ERROR'}, f"AO bake failed: {error}")
+            return {'CANCELLED'}
+        return self._done(context, system, effector)
+
+    def invoke(self, context, event):
+        system, _effector = _get_active_effector(context)
+        if self._refuse(context):
+            return {'CANCELLED'}
+        self._bake = bake_utils.AOBake(context, system.target_ground)
+        error = self._bake.start(context)
+        if error is not None:
+            self.report({'ERROR'}, f"AO bake failed: {error}")
+            return {'CANCELLED'}
+        wm = context.window_manager
+        wm.scatter_ao_bake_ground = system.target_ground.name
+        wm.scatter_ao_bake_progress = 0.0
+        self._drawn = False
+        self._timer = wm.event_timer_add(0.01, window=context.window)
+        wm.modal_handler_add(self)
+        context.workspace.status_text_set("Baking ambient occlusion…  Esc: cancel")
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if event.type == 'ESC':
+            self._bake.cancel()
+            self._end(context)
+            self.report({'WARNING'}, "AO bake cancelled")
+            return {'CANCELLED'}
+        if event.type != 'TIMER':
+            return {'RUNNING_MODAL'}
+        if not self._drawn:
+            self._drawn = True
+            _tag_redraw_viewport(context)
+            return {'RUNNING_MODAL'}
+        error = self._bake.step(context)
+        if error is not None:
+            self._bake.cancel()
+            self._end(context)
+            self.report({'ERROR'}, f"AO bake failed: {error}")
+            return {'CANCELLED'}
+        context.window_manager.scatter_ao_bake_progress = self._bake.progress
+        _tag_redraw_viewport(context)
+        if self._bake.done < bake_utils.BAKE_PASSES:
+            return {'RUNNING_MODAL'}
+        self._bake.finish()
+        self._end(context)
+        system, effector = _get_active_effector(context)
+        if effector is None or effector.effector_type != 'MASK_BY_AO':
+            return {'FINISHED'}
+        return self._done(context, system, effector)
+
+    def _end(self, context):
+        wm = context.window_manager
+        wm.event_timer_remove(self._timer)
+        wm.scatter_ao_bake_ground = ""
+        wm.scatter_ao_bake_progress = 0.0
+        context.workspace.status_text_set(None)
+        _tag_redraw_viewport(context)
 
 
 class SCATTER_OT_open_mask_image(Operator):
@@ -599,5 +705,18 @@ classes = (
     SCATTER_OT_set_vertex_mode,
     SCATTER_OT_toggle_edge_blend,
     SCATTER_OT_start_vertex_paint,
+    SCATTER_OT_bake_ao,
     SCATTER_OT_open_mask_image,
 )
+
+
+def register():
+    bpy.types.WindowManager.scatter_ao_bake_ground = StringProperty(options={'SKIP_SAVE'})
+    bpy.types.WindowManager.scatter_ao_bake_progress = FloatProperty(
+        name="Bake Progress", subtype='FACTOR', min=0.0, max=1.0, options={'SKIP_SAVE'},
+    )
+
+
+def unregister():
+    del bpy.types.WindowManager.scatter_ao_bake_progress
+    del bpy.types.WindowManager.scatter_ao_bake_ground
