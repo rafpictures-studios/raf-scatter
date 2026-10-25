@@ -1,7 +1,7 @@
 from bpy.props import EnumProperty
 from bpy.types import Operator
 
-from ..properties import sync_system_auto_name
+from ..properties import sync_system_from_instances
 from ..utils import geonodes as geonodes_utils
 
 
@@ -77,7 +77,7 @@ class SCATTER_OT_set_manual_instances_source(Operator):
             self.report({'WARNING'}, "Instances socket not found")
             return {'CANCELLED'}
         system.manual_instances_mode = index
-        sync_system_auto_name(system)
+        sync_system_from_instances(system)
         context.view_layer.update()
         return {'FINISHED'}
 

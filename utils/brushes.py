@@ -38,6 +38,58 @@ NATIVE_CURVES_TOOL = "builtin.brush"
 _native_tool_lookup = False
 _ESSENTIALS_BRUSH_DIR = ("brushes", "essentials_brushes-curve_sculpt.blend", "Brush")
 _BRUSH_NAME_PREFIX = "Scatter "
+_BRUSH_ATTEMPTS = 2
+_brush_type_original = {}
+
+
+#----BRUSH TYPE----
+def brush_type(brush):
+    """Curves sculpt type of a brush; the property was renamed in Blender 5.0."""
+    if brush is None:
+        return None
+    if hasattr(brush, "curves_sculpt_brush_type"):
+        return brush.curves_sculpt_brush_type
+    return getattr(brush, "curves_sculpt_tool", None)
+
+
+def _set_brush_type(brush, value):
+    if hasattr(brush, "curves_sculpt_brush_type"):
+        brush.curves_sculpt_brush_type = value
+    else:
+        brush.curves_sculpt_tool = value
+
+
+def _active_brush(scene):
+    try:
+        return scene.tool_settings.curves_sculpt.brush
+    except AttributeError:
+        return None
+
+
+def _has_brush_type(scene, identifier):
+    return brush_type(_active_brush(scene)) == BRUSH_TO_CURVES_TOOL[identifier]
+
+
+def _correct_brush_type(scene, identifier):
+    """Give an edited brush (e.g. a Slide set to Comb) the scatter type for this session only."""
+    brush = _active_brush(scene)
+    expected = BRUSH_TO_CURVES_TOOL[identifier]
+    if brush is None or brush_type(brush) == expected or not brush.is_editable:
+        return False
+    _brush_type_original.setdefault(brush.as_pointer(), brush_type(brush))
+    _set_brush_type(brush, expected)
+    return True
+
+
+def restore_brush_types():
+    """Give the brushes corrected during the session their own type back."""
+    if not _brush_type_original:
+        return
+    for brush in bpy.data.brushes:
+        original = _brush_type_original.get(brush.as_pointer())
+        if original is not None and brush.is_editable:
+            _set_brush_type(brush, original)
+    _brush_type_original.clear()
 
 
 #----SCULPTING STATE----
@@ -99,7 +151,7 @@ def _ensure_curves_brush(identifier):
     native_name = BRUSH_TO_NATIVE_NAME.get(identifier)
     if native_name is not None:
         native = bpy.data.brushes.get(native_name)
-        if native is not None and native.curves_sculpt_tool == BRUSH_TO_CURVES_TOOL[identifier]:
+        if native is not None and brush_type(native) == BRUSH_TO_CURVES_TOOL[identifier]:
             return native
     tool = BRUSH_TO_CURVES_TOOL[identifier]
     name = _BRUSH_NAME_PREFIX + tool.replace("_", " ").title()
@@ -107,7 +159,7 @@ def _ensure_curves_brush(identifier):
     if brush is not None:
         return brush
     brush = _create_curves_brush(name)
-    brush.curves_sculpt_tool = tool
+    _set_brush_type(brush, tool)
     return brush
 
 
@@ -127,23 +179,6 @@ def _assign_brush_pointer(scene, identifier):
 
 
 #----ACTIVE BRUSH----
-def _acceptable_brush_names(identifier):
-    """Return native and fallback names accepted for the active selection."""
-    names = {BRUSH_TO_NATIVE_NAME[identifier]}
-    tool = BRUSH_TO_CURVES_TOOL[identifier]
-    names.add(_BRUSH_NAME_PREFIX + tool.replace("_", " ").title())
-    return names
-
-
-def _current_brush_name(scene):
-    """Return the active curves sculpt brush name, if available."""
-    try:
-        brush = scene.tool_settings.curves_sculpt.brush
-    except AttributeError:
-        return None
-    return brush.name if brush is not None else None
-
-
 def ensure_active_brush(scene):
     """Keep the native brush aligned with the addon selection while sculpting."""
     identifier = getattr(scene, "scatter_active_brush", None)
@@ -151,17 +186,13 @@ def ensure_active_brush(scene):
         return
     if not _any_system_sculpting(scene):
         return
-    current = _current_brush_name(scene)
-    if current is not None and current in _acceptable_brush_names(identifier):
+    if _has_brush_type(scene, identifier):
         return
     if get_active_curves_tool_id(bpy.context) in BRUSH_BY_SCATTER_TOOL:
         _activate_brush_asset_for_scatter_tool(identifier)
-        return
-    if _activate_brush_asset(identifier):
-        return
-    if _activate_workspace_tool(identifier):
-        return
-    _assign_brush_pointer(scene, identifier)
+    elif not _activate_brush_asset(identifier) and not _activate_workspace_tool(identifier):
+        _assign_brush_pointer(scene, identifier)
+    _correct_brush_type(scene, identifier)
 
 
 #----SCATTER TOOLS----
@@ -194,15 +225,19 @@ def is_native_tool_lookup():
 
 
 def _activate_brush_asset_for_scatter_tool(identifier):
-    """Activate the scatter brush asset, then put the scatter tool back on top of it."""
+    """Activate the scatter brush asset and tool, again when the tool switch swapped the brush."""
     global _native_tool_lookup
-    _native_tool_lookup = True
-    try:
-        activated = _activate_brush_asset(identifier)
-    finally:
-        _native_tool_lookup = False
-    tool_set = set_curves_tool(SCATTER_TOOLS[identifier][0])
-    return activated and tool_set
+    scene = bpy.context.scene
+    for _attempt in range(_BRUSH_ATTEMPTS):
+        _native_tool_lookup = True
+        try:
+            activated = _activate_brush_asset(identifier)
+        finally:
+            _native_tool_lookup = False
+        tool_set = set_curves_tool(SCATTER_TOOLS[identifier][0])
+        if activated and tool_set and _has_brush_type(scene, identifier):
+            return True
+    return activated and _correct_brush_type(scene, identifier)
 
 
 def activate_scatter_tool(identifier):
@@ -260,9 +295,8 @@ def apply_active_brush(scene, context=None):
         return False
     if _activate_brush_asset_for_scatter_tool(identifier):
         return True
-    if _activate_brush_asset(identifier):
-        return True
-    if _activate_workspace_tool(identifier):
+    if _activate_brush_asset(identifier) or _activate_workspace_tool(identifier):
+        _correct_brush_type(scene, identifier)
         return True
     if _assign_brush_pointer(scene, identifier):
         return True

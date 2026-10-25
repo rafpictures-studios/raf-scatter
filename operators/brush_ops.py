@@ -27,6 +27,7 @@ _saved_viewport = {}
 _brush_pie_keymaps = []
 _edit_guard_keymaps = []
 _EDIT_MODE_MESSAGE = "Edit Mode is disabled for RAF Scatter paint systems — use Start Painting"
+_SCULPT_MODE_MESSAGE = "RAF Scatter paint systems are sculpted only with Start Painting"
 
 
 #----SYSTEM LOOKUP----
@@ -250,13 +251,21 @@ def is_paint_curve(obj):
     return False
 
 
-def _paint_curves_in_edit_mode():
+def _is_session_curve(scene, curve_obj):
+    return scene.scatter_paint_ui_saved and scene.scatter_paint_curve_obj == curve_obj
+
+
+def _blocked_paint_curves():
+    """Paint curves in Edit Mode, or in Sculpt Mode without a RAF Scatter paint session."""
     return [
         system.curve_obj
         for scene in bpy.data.scenes for ground in scene.scatter_grounds
         for system in ground.scatter_systems
-        if system.system_type == 'MANUAL' and system.curve_obj is not None
-        and system.curve_obj.mode == 'EDIT'
+        if system.system_type == 'MANUAL' and system.curve_obj is not None and (
+            system.curve_obj.mode == 'EDIT'
+            or (system.curve_obj.mode == 'SCULPT_CURVES'
+                and not _is_session_curve(scene, system.curve_obj))
+        )
     ]
 
 
@@ -264,21 +273,28 @@ def _draw_edit_mode_message(menu, context):
     menu.layout.label(text=_EDIT_MODE_MESSAGE)
 
 
+def _draw_sculpt_mode_message(menu, context):
+    menu.layout.label(text=_SCULPT_MODE_MESSAGE)
+
+
 def _leave_paint_curve_edit_mode():
     """Timer callback that sends paint curves entered in Edit Mode back to Object Mode."""
     wm = bpy.context.window_manager
-    if not _paint_curves_in_edit_mode() or not wm.windows:
+    blocked = _blocked_paint_curves()
+    if not blocked or not wm.windows:
         return None
+    sculpting = any(obj.mode == 'SCULPT_CURVES' for obj in blocked)
     window = wm.windows[0]
     with bpy.context.temp_override(window=window):
         bpy.ops.object.mode_set(mode='OBJECT')
-        wm.popup_menu(_draw_edit_mode_message, title="RAF Scatter", icon='INFO')
+        draw = _draw_sculpt_mode_message if sculpting else _draw_edit_mode_message
+        wm.popup_menu(draw, title="RAF Scatter", icon='INFO')
     return None
 
 
 def _guard_paint_curve_edit_mode(scene, depsgraph):
-    """Catch Edit Mode entered on a paint curve by any route other than Tab."""
-    if _paint_curves_in_edit_mode() and not bpy.app.timers.is_registered(
+    """Catch Edit Mode or a Sculpt Mode outside Start Painting on a paint curve, by any route."""
+    if _blocked_paint_curves() and not bpy.app.timers.is_registered(
         _leave_paint_curve_edit_mode
     ):
         bpy.app.timers.register(_leave_paint_curve_edit_mode, first_interval=0.0)
@@ -328,6 +344,7 @@ def end_paint_session(context):
     scene = context.scene
     _clear_paint_session(scene)
     brush_utils.sync_scatter_tool(scene, False)
+    brush_utils.restore_brush_types()
     cursor_utils.clear_cursor()
     _sync_native_cursor(scene, False)
     _restore_default_falloff()
@@ -546,6 +563,7 @@ def register():
 def unregister():
     global _cursor_tracker_token
     brush_utils.restore_native_curves_tool()
+    brush_utils.restore_brush_types()
     _unregister_brush_pie_keymap()
     _unregister_edit_guard_keymap()
     if bpy.app.timers.is_registered(_leave_paint_curve_edit_mode):

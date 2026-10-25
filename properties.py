@@ -184,14 +184,49 @@ def _is_auto_system_name(name):
     return bool(_AUTO_SYSTEM_NAME_RE.match(name))
 
 
-def sync_system_auto_name(system):
-    """Rename an auto-named system after its active instance source, plus the suffix."""
+def _active_instance_source(system):
     if system.system_type == 'MANUAL':
         mode = system.manual_instances_mode
-        source = system.manual_instances_collection if mode == 1 else system.manual_instances_object
-    else:
-        mode = system.instances_mode
-        source = system.instances_collection if mode == 1 else system.instances_object
+        return system.manual_instances_collection if mode == 1 else system.manual_instances_object
+    mode = system.instances_mode
+    return system.instances_collection if mode == 1 else system.instances_object
+
+
+def _source_materials(source):
+    """Materials of an instance object or of every object in an instance collection, once each."""
+    objects = source.all_objects if isinstance(source, bpy.types.Collection) else (source,)
+    materials = []
+    for obj in objects:
+        for slot in obj.material_slots:
+            if slot.material is not None and slot.material not in materials:
+                materials.append(slot.material)
+    return materials
+
+
+def sync_system_materials(system):
+    """Give the scatter curve the materials of its instances, so they can be edited from it."""
+    curve_obj = system.curve_obj
+    source = _active_instance_source(system)
+    if curve_obj is None or curve_obj.data is None or source is None:
+        return
+    materials = _source_materials(source)
+    slots = curve_obj.data.materials
+    if list(slots) == materials:
+        return
+    slots.clear()
+    for material in materials:
+        slots.append(material)
+
+
+def sync_system_from_instances(system):
+    """Follow a new instance source: curve materials and the automatic system name."""
+    sync_system_materials(system)
+    sync_system_auto_name(system)
+
+
+def sync_system_auto_name(system):
+    """Rename an auto-named system after its active instance source, plus the suffix."""
+    source = _active_instance_source(system)
     if source is None or not _is_auto_system_name(system.name):
         return
     new_name = source.name + SYSTEM_AUTO_NAME_SUFFIX
@@ -211,7 +246,7 @@ def _on_instances_object_update(self, context):
     modifier = geonodes_utils.get_instances_modifier(self)
     if modifier is not None:
         geonodes_utils.set_modifier_input_value(modifier, "Object", self.instances_object)
-    sync_system_auto_name(self)
+    sync_system_from_instances(self)
 
 
 def _on_instances_collection_update(self, context):
@@ -219,7 +254,7 @@ def _on_instances_collection_update(self, context):
     modifier = geonodes_utils.get_instances_modifier(self)
     if modifier is not None:
         geonodes_utils.set_modifier_input_value(modifier, "Collection", self.instances_collection)
-    sync_system_auto_name(self)
+    sync_system_from_instances(self)
 
 
 def _on_manual_instances_object_update(self, context):
@@ -227,7 +262,7 @@ def _on_manual_instances_object_update(self, context):
     modifier = geonodes_utils.get_manual_instances_modifier(self)
     if modifier is not None:
         geonodes_utils.set_modifier_input_value(modifier, "Object", self.manual_instances_object)
-    sync_system_auto_name(self)
+    sync_system_from_instances(self)
 
 
 def _on_manual_instances_collection_update(self, context):
@@ -237,7 +272,7 @@ def _on_manual_instances_collection_update(self, context):
         geonodes_utils.set_modifier_input_value(
             modifier, "Collection", self.manual_instances_collection,
         )
-    sync_system_auto_name(self)
+    sync_system_from_instances(self)
 
 
 def _on_system_name_update(self, context):
