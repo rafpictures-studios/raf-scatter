@@ -70,12 +70,9 @@ def run(job_path):
     loaded = _append_requests(job["requests"])
     _make_everything_local()
     missing_images = _pack_images()
-    for idb in loaded.values():
-        if idb.asset_data is None:
-            idb.asset_mark()
-    for obj in bpy.data.objects:
-        if obj.type == 'MESH' and obj.asset_data is None:
-            obj.asset_mark()
+    for idb in (*bpy.data.objects, *bpy.data.collections):
+        if idb.asset_data is not None:
+            idb.asset_clear()
     if loaded:
         os.makedirs(os.path.dirname(job["output"]), exist_ok=True)
         bpy.data.libraries.write(

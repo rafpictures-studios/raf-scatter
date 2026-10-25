@@ -20,7 +20,6 @@ PACK_MANIFEST = "pack.json"
 PACK_ASSETS_FILE = "assets/assets.blend"
 PACK_ASSETS_DIR = "assets"
 PACK_TEXTURE_DIR = "assets/textures"
-_ASSET_LIBRARY_SUFFIX = " (RAF Pack)"
 _INSTALL_PREFIX = ".installing_"
 _WORKER_SCRIPT = os.path.join(os.path.dirname(__file__), "pack_worker.py")
 _WORKER_TIMEOUT = 900
@@ -98,17 +97,6 @@ def find_pack_asset_library(root):
         if library.path and _normalized(library.path) == target:
             return library
     return None
-
-
-def add_pack_asset_library(root, pack_name):
-    """Register a pack's assets folder as an asset library unless it already is one."""
-    directory = os.path.join(root, PACK_ASSETS_DIR)
-    if not os.path.isdir(directory) or find_pack_asset_library(root) is not None:
-        return
-    preferences = bpy.context.preferences
-    libraries = preferences.filepaths.asset_libraries
-    libraries.new(name=pack_name + _ASSET_LIBRARY_SUFFIX, directory=directory)
-    preferences.is_dirty = True
 
 
 def remove_pack_asset_library(root):
@@ -263,12 +251,11 @@ def install_pack(filepath, nested=False):
             os.replace(staging, target)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-    add_pack_asset_library(target, manifest["name"])
     return manifest, skipped
 
 
 def uninstall_pack(pack_id):
-    """Remove an installed pack folder and its asset library entry."""
+    """Remove an installed pack folder and the asset library an older version registered for it."""
     packs_dir = biomes_utils.get_packs_dir()
     root = os.path.normpath(os.path.join(packs_dir, pack_id))
     inside = bool(packs_dir) and bool(pack_id) and os.path.dirname(root) == packs_dir

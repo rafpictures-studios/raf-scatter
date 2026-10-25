@@ -89,9 +89,6 @@ class SCATTER_OT_install_pack(Operator):
         if body is None:
             return
         _draw_install_summary(body, bpy.path.abspath(self.filepath))
-        body.separator()
-        _draw_dim_lines(body, ("Its assets are added to the Asset Browser",
-                               "as a library of their own"))
 
     def execute(self, context):
         try:
