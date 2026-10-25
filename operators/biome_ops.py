@@ -379,7 +379,9 @@ class SCATTER_OT_open_biome_browser(Operator):
         layout = self.layout
         wm = context.window_manager
         prefs = get_addon_prefs(context)
-        layout.operator("scatter.save_biome", text="Save Biome Preset", icon='FILE_TICK')
+        top = layout.row(align=True)
+        top.operator("scatter.save_biome", text="Save Biome Preset", icon='FILE_TICK')
+        top.operator("scatter.open_biome_preferences", text="", icon='PREFERENCES')
         group = BIOME_GROUP_LOCAL
         if prefs is not None:
             layout.prop(prefs, "biome_group", text="")

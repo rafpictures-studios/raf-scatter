@@ -36,6 +36,25 @@ def _ensure_under(parent, obj=None, coll=None):
     if coll is not None and coll.name not in parent.children:
         parent.children.link(coll)
 
+def _place_in_scatter(scatter_coll, obj=None, coll=None):
+    """Keep an asset under SCATTER: at its root unless a SCATTER collection already holds it."""
+    tree = (scatter_coll, *scatter_coll.children_recursive)
+    if obj is not None and not any(obj.name in c.objects for c in tree):
+        scatter_coll.objects.link(obj)
+    if coll is not None and coll not in tree:
+        scatter_coll.children.link(coll)
+
+def _move_into(collection, obj=None, coll=None):
+    """Put an asset into a group collection and take it off the SCATTER root."""
+    _ensure_under(collection, obj=obj, coll=coll)
+    scatter_coll = bpy.data.collections.get("SCATTER")
+    if scatter_coll is None or collection == scatter_coll:
+        return
+    if obj is not None and obj.name in scatter_coll.objects:
+        scatter_coll.objects.unlink(obj)
+    if coll is not None and coll.name in scatter_coll.children:
+        scatter_coll.children.unlink(coll)
+
 #----ACTIVE SYSTEM----
 
 def _get_active_system():
@@ -311,10 +330,10 @@ def resolve_library_asset(source):
     objs, colls, _reused, _failed = _resolve_assets(filepath, [name], link=False)
     scatter_coll = _get_or_create_scatter_collection()
     if name in objs:
-        _ensure_under(scatter_coll, obj=objs[name])
+        _place_in_scatter(scatter_coll, obj=objs[name])
         return objs[name]
     if name in colls:
-        _ensure_under(scatter_coll, coll=colls[name])
+        _place_in_scatter(scatter_coll, coll=colls[name])
         return colls[name]
     return None
 
@@ -329,11 +348,11 @@ def ensure_scatter_subcollection(name):
     return collection
 
 def link_under(parent, idb):
-    """Link an object or collection under parent unless already inside."""
+    """Put an object or collection into a SCATTER group collection (off the SCATTER root)."""
     if isinstance(idb, bpy.types.Collection):
-        _ensure_under(parent, coll=idb)
+        _move_into(parent, coll=idb)
     else:
-        _ensure_under(parent, obj=idb)
+        _move_into(parent, obj=idb)
 
 #----SELECTED ASSETS----
 
@@ -544,12 +563,12 @@ class SCATTER_OT_import_selected(Operator):
         verb = "Reused" if name in reused else "Imported"
         scatter_coll = _get_or_create_scatter_collection()
         if name in objs:
-            _ensure_under(scatter_coll, obj=objs[name])
+            _place_in_scatter(scatter_coll, obj=objs[name])
             _apply_as_instance(obj=objs[name], coll=None, as_collection=False)
             self.report({'INFO'}, f"{verb} '{name}' as instance object")
             return {'FINISHED'}
         if name in colls:
-            _ensure_under(scatter_coll, coll=colls[name])
+            _place_in_scatter(scatter_coll, coll=colls[name])
             _apply_as_instance(obj=None, coll=colls[name], as_collection=True)
             self.report({'INFO'}, f"{verb} collection '{name}' as instance collection")
             return {'FINISHED'}
@@ -580,9 +599,9 @@ class SCATTER_OT_import_selected(Operator):
         scatter_coll = _get_or_create_scatter_collection()
         collection = self._get_target_collection(scatter_coll, collection_name)
         for obj in objs.values():
-            _ensure_under(collection, obj=obj)
+            _move_into(collection, obj=obj)
         for coll in colls.values():
-            _ensure_under(collection, coll=coll)
+            _move_into(collection, coll=coll)
         _apply_as_instance(obj=None, coll=collection, as_collection=True)
 
         total = len(objs) + len(colls)
