@@ -162,6 +162,11 @@ def make_node_groups_local(show_inputs=False):
         node_group.name for node_group in bpy.data.node_groups if node_group.library == library
     }
     count = len(names)
+    local_before = [
+        node_group for node_group in bpy.data.node_groups
+        if node_group.library is None and node_group_base_name(node_group) in names
+    ]
+    known = {node_group.as_pointer() for node_group in local_before}
     remaining = _library_ids(library)
     while remaining:
         for idb in remaining:
@@ -172,11 +177,29 @@ def make_node_groups_local(show_inputs=False):
         remaining = left
     if not remaining:
         bpy.data.libraries.remove(library)
+    _replace_older_local_copies(local_before, known, names)
     if show_inputs:
         for node_group in bpy.data.node_groups:
             if node_group.library is None and node_group_base_name(node_group) in names:
                 _show_inputs_in_modifier(node_group)
     return count
+
+
+def _replace_older_local_copies(local_before, known, names):
+    """Hand the users and plain name of older local copies to the freshly made-local groups."""
+    fresh = {
+        node_group_base_name(node_group): node_group for node_group in bpy.data.node_groups
+        if node_group.library is None and node_group.as_pointer() not in known
+        and node_group_base_name(node_group) in names
+    }
+    for old in local_before:
+        new = fresh.get(node_group_base_name(old))
+        if new is None:
+            continue
+        old.user_remap(new)
+        bpy.data.node_groups.remove(old)
+    for base_name, node_group in fresh.items():
+        node_group.name = base_name
 
 
 def _show_inputs_in_modifier(node_group):
