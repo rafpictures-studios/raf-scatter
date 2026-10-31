@@ -2,11 +2,13 @@
 import json
 import os
 import sys
+import uuid
 
 import bpy
 
 
 _PACKABLE_SOURCES = {'FILE', 'SEQUENCE', 'TILED'}
+_PACK_UID = "raf_pack_uid"
 _LOCAL_ID_TYPES = (
     "objects", "collections", "meshes", "curves", "hair_curves", "pointclouds", "volumes",
     "materials", "node_groups", "images", "textures", "lights", "grease_pencils", "fonts",
@@ -62,6 +64,14 @@ def _pack_images():
     return missing
 
 
+def _stamp_pack_ids():
+    """Give every datablock a pack id, so loading it twice reuses it and never mixes two up."""
+    for id_type in _LOCAL_ID_TYPES:
+        for idb in getattr(bpy.data, id_type, ()):
+            if idb.library is None and not idb.get(_PACK_UID):
+                idb[_PACK_UID] = uuid.uuid4().hex
+
+
 #----JOB----
 def run(job_path):
     with open(job_path, "r", encoding="utf-8") as handle:
@@ -70,9 +80,11 @@ def run(job_path):
     loaded = _append_requests(job["requests"])
     _make_everything_local()
     missing_images = _pack_images()
-    for idb in (*bpy.data.objects, *bpy.data.collections):
-        if idb.asset_data is not None:
-            idb.asset_clear()
+    _stamp_pack_ids()
+    for id_type in _LOCAL_ID_TYPES:
+        for idb in getattr(bpy.data, id_type, ()):
+            if idb.library is None and idb.asset_data is not None:
+                idb.asset_clear()
     if loaded:
         os.makedirs(os.path.dirname(job["output"]), exist_ok=True)
         bpy.data.libraries.write(

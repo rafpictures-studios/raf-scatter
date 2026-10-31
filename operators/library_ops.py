@@ -12,8 +12,16 @@ _SHOW_HEADER = False
 _SHOW_TOOLBAR = True
 _SHOW_ASSET_DETAILS = True
 _TAG = "raf_source"
-_DEP_TYPES = ("node_groups", "images", "materials", "meshes", "objects", "collections")
+_PACK_UID = "raf_pack_uid"
+_ORIGIN = "raf_origin"
+_DEP_TYPES = (
+    "node_groups", "images", "textures", "materials", "meshes", "curves", "objects", "collections",
+)
 _SUFFIX_RE = re.compile(r"\.\d{3,}$")
+_library_windows = set()
+_ASSET_TYPES = _DEP_TYPES + (
+    "worlds", "lights", "pointclouds", "volumes", "grease_pencils", "brushes", "actions",
+)
 
 #----SCATTER COLLECTION----
 
@@ -122,24 +130,17 @@ def _find_existing(datablocks, key):
             return idb
     return None
 
-def _clear_asset_data(obj_or_coll, context=None):
-    """Remove asset metadata so the import is not marked as an asset."""
-    if obj_or_coll is None or obj_or_coll.asset_data is None:
-        return
-    if context is None:
-        context = bpy.context
-    try:
-        with context.temp_override(id=obj_or_coll):
-            bpy.ops.asset.clear(set_fake_user=False)
-    except (TypeError, RuntimeError):
-        try:
-            if hasattr(obj_or_coll, 'select_set'):
-                bpy.ops.object.select_all(action='DESELECT')
-                obj_or_coll.select_set(True)
-                context.view_layer.objects.active = obj_or_coll
-                bpy.ops.asset.clear(set_fake_user=False)
-        except (RuntimeError, AttributeError):
-            pass
+def _clear_asset_data(idb):
+    """Remove asset metadata so nothing imported is marked as an asset."""
+    if idb is not None and idb.library is None and idb.asset_data is not None:
+        idb.asset_clear()
+
+def _clear_new_asset_marks(snap_ptrs):
+    """Clear the asset mark of every datablock a load added."""
+    for dep_type, ptrs in snap_ptrs.items():
+        for idb in getattr(bpy.data, dep_type, ()):
+            if idb.as_pointer() not in ptrs:
+                _clear_asset_data(idb)
 
 #----ASSET LOADING----
 
@@ -148,11 +149,13 @@ def _snapshot():
     snap = {}
     for dep_type in _DEP_TYPES:
         datablocks = getattr(bpy.data, dep_type)
-        tagged = {idb.get(_TAG): idb for idb in datablocks if idb.library is None and idb.get(_TAG)}
+        local = [idb for idb in datablocks if idb.library is None]
         snap[dep_type] = {
             "ptrs": {idb.as_pointer() for idb in datablocks},
             "names": {idb.name for idb in datablocks},
-            "tagged": tagged,
+            "tagged": {idb.get(_TAG): idb for idb in local if idb.get(_TAG)},
+            "uids": {idb.get(_PACK_UID): idb for idb in local if idb.get(_PACK_UID)},
+            "origins": {_origin(idb): idb for idb in local if _origin(idb)},
         }
     return snap
 
@@ -165,36 +168,47 @@ def _original_name(name, pre_names):
             return base
     return name
 
-def _find_twin(obj, pre_names):
-    """Find the earlier local object that obj was renamed away from."""
-    base = _original_name(obj.name, pre_names)
-    twin = bpy.data.objects.get(base) if base != obj.name else None
-    if twin is None or twin.type != obj.type or twin.get(_TAG) not in (None, obj.get(_TAG)):
+def _origin(idb):
+    """The library file and name a local datablock was appended from, or None."""
+    stored = idb.get(_ORIGIN)
+    if stored:
+        return stored
+    weak = getattr(idb, "library_weak_reference", None)
+    if weak is None or not weak.filepath:
         return None
-    if obj.type == 'MESH':
-        if len(twin.data.vertices) != len(obj.data.vertices):
-            return None
-        if len(twin.data.polygons) != len(obj.data.polygons):
-            return None
-    return twin
+    return f"{_norm_path(weak.filepath)}|{weak.id_name}"
 
-def _link_object_data(source, target):
-    """Share the object data of source with target."""
-    if source.data is None or source.data == target.data:
-        return
-    old_data = target.data
-    old_materials = [slot.material for slot in target.material_slots if slot.material]
-    target.data = source.data
-    orphans = [idb for idb in (old_data, *old_materials) if idb.users == 0]
-    if orphans:
-        bpy.data.batch_remove(orphans)
+def _remember_origin(idb):
+    """Keep the append origin, which Blender drops once the same file is appended again."""
+    origin = _origin(idb)
+    if origin and idb.library is None and idb.get(_ORIGIN) != origin:
+        idb[_ORIGIN] = origin
 
-def _dedupe_new_data(filepath, snap, keep):
-    """Merge freshly appended data into earlier imports."""
+def _same_origin(idb, pre):
+    """An earlier append of the very same datablock of the same library file."""
+    origin = _origin(idb)
+    old = pre["origins"].get(origin) if origin else None
+    if old is None or old == idb:
+        return None
+    uid, old_uid = idb.get(_PACK_UID), old.get(_PACK_UID)
+    if uid and old_uid and uid != old_uid:
+        return None
+    return old
+
+def _merge_into(idb, old, datablocks):
+    idb.user_remap(old)
+    datablocks.remove(idb)
+
+def _dedupe_new_data(filepath, snap, keep, library_names):
+    """Merge freshly appended data into earlier imports, only on a certain identity: the same pack
+    id, the same datablock of the same library file, or the same library name when no name of
+    that kind clashed with the file."""
     merged = 0
     for dep_type in _DEP_TYPES:
         datablocks = getattr(bpy.data, dep_type)
         pre = snap[dep_type]
+        names = library_names.get(dep_type, set())
+        exact_names = not (names & pre["names"])
         new_ids = [
             idb for idb in datablocks
             if idb.as_pointer() not in pre["ptrs"]
@@ -202,14 +216,20 @@ def _dedupe_new_data(filepath, snap, keep):
             and idb.library is None
         ]
         for idb in new_ids:
-            key = _source_key(filepath, _original_name(idb.name, pre["names"]))
-            old = pre["tagged"].get(key)
+            uid = idb.get(_PACK_UID)
+            old = pre["uids"].get(uid) if uid else None
+            if old is None:
+                old = _same_origin(idb, pre)
+            if old is None and not uid and exact_names and idb.name in names:
+                key = _source_key(filepath, idb.name)
+                old = pre["tagged"].get(key)
+                if old is None:
+                    _tag(idb, key)
             if old is not None and old != idb:
-                idb.user_remap(old)
-                datablocks.remove(idb)
+                _merge_into(idb, old, datablocks)
                 merged += 1
                 continue
-            _tag(idb, key)
+            _remember_origin(idb)
             _clear_asset_data(idb)
     return merged
 
@@ -239,6 +259,9 @@ def _load_assets(filepath, names, link):
     with bpy.data.libraries.load(filepath, link=link) as (data_from, data_to):
         file_objects = list(data_from.objects)
         file_collections = list(data_from.collections)
+        library_names = {
+            dep_type: set(getattr(data_from, dep_type, ())) for dep_type in _DEP_TYPES
+        }
         obj_names = [n for n in names if n in data_from.objects]
         coll_names = [n for n in names if n not in obj_names and n in data_from.collections]
         data_to.objects = list(obj_names)
@@ -265,7 +288,7 @@ def _load_assets(filepath, names, link):
     if missing:
         print(f"[RAF] Not loaded from '{filepath}': {missing[:5]} | "
               f"file objects: {file_objects[:30]} | file collections: {file_collections[:10]}")
-    return objs, colls, missing
+    return objs, colls, missing, library_names
 
 def _resolve_assets(filepath, names, link):
     """Return (objects, collections, reused_names, failed_names) keyed by asset name."""
@@ -287,8 +310,9 @@ def _resolve_assets(filepath, names, link):
     failed = []
     if to_load:
         snap = None if link else _snapshot()
+        before = {t: {i.as_pointer() for i in getattr(bpy.data, t, ())} for t in _ASSET_TYPES}
         try:
-            new_objs, new_colls, failed = _load_assets(filepath, to_load, link)
+            new_objs, new_colls, failed, library_names = _load_assets(filepath, to_load, link)
         except (OSError, RuntimeError) as exc:
             print(f"[RAF] Library load failed: {exc}")
             return objs, colls, reused, list(to_load)
@@ -304,15 +328,11 @@ def _resolve_assets(filepath, names, link):
             colls[name] = coll
 
         if snap is not None:
-            for obj in new_objs.values():
-                twin = _find_twin(obj, snap["objects"]["names"])
-                if twin is not None:
-                    _link_object_data(twin, obj)
-                    print(f"[RAF] Linked object data of '{obj.name}' to '{twin.name}'")
             keep = {idb.as_pointer() for idb in (*new_objs.values(), *new_colls.values())}
-            merged = _dedupe_new_data(filepath, snap, keep)
+            merged = _dedupe_new_data(filepath, snap, keep, library_names)
             if merged:
                 print(f"[RAF] Merged {merged} duplicate datablock(s) into earlier imports")
+        _clear_new_asset_marks(before)
 
     return objs, colls, reused, failed
 
@@ -377,22 +397,33 @@ def _print_source_dump(context, paths):
 
 #----ASSET BROWSER----
 
+def _is_asset_browser_window(window):
+    """A window opened by Open Library, or a separate window showing only the Asset Browser."""
+    if window.as_pointer() in _library_windows:
+        return True
+    areas = window.screen.areas if window.screen else ()
+    return bool(areas) and all(area.ui_type == 'ASSETS' for area in areas)
+
 def _close_asset_browser_windows():
     """Timer callback that closes every temporary Asset Browser window."""
     windows = list(bpy.context.window_manager.windows)
     for window in windows[1:]:
-        areas = window.screen.areas
-        if len(areas) == 1 and areas[0].ui_type == 'ASSETS':
-            try:
-                with bpy.context.temp_override(window=window, screen=window.screen):
-                    bpy.ops.wm.window_close()
-            except (TypeError, RuntimeError):
-                pass
+        if not _is_asset_browser_window(window):
+            continue
+        area = window.screen.areas[0] if window.screen.areas else None
+        try:
+            with bpy.context.temp_override(window=window, screen=window.screen, area=area):
+                bpy.ops.wm.window_close()
+        except (TypeError, RuntimeError) as exc:
+            print(f"[RAF] Could not close the Asset Browser window: {exc}")
+    alive = {w.as_pointer() for w in bpy.context.window_manager.windows}
+    _library_windows.intersection_update(alive)
     return None
 
 def _close_asset_browser():
     """Close the Asset Browser windows once the running operator has returned."""
-    bpy.app.timers.register(_close_asset_browser_windows, first_interval=0.1)
+    if not bpy.app.timers.is_registered(_close_asset_browser_windows):
+        bpy.app.timers.register(_close_asset_browser_windows, first_interval=0.1)
 
 def _get_default_library_name():
     """Return the default library name from the addon preferences, '' for all."""
@@ -435,6 +466,7 @@ class SCATTER_OT_open_library(Operator):
         if new_window is None:
             self.report({'WARNING'}, "Failed to create window")
             return {'CANCELLED'}
+        _library_windows.add(new_window.as_pointer())
 
         area = new_window.screen.areas[0]
         area.ui_type = 'ASSETS'
@@ -581,26 +613,35 @@ class SCATTER_OT_import_selected(Operator):
 
     def _import_multiple(self, context, files, link):
         """Import multiple assets into a single collection."""
-        collection_name = self.collection_name
-        if not collection_name:
-            self.report({'WARNING'}, "Collection name is required")
-            return {'CANCELLED'}
-        filepath, _ = self._get_source(context)
-        if not filepath:
-            self.report({'WARNING'}, "Cannot determine source file")
-            return {'CANCELLED'}
+        collection_name = self.collection_name.strip() or self._recommend_name(
+            [f.name for f in files if f.name])
+        by_file = {}
+        for filepath, name, _id_type in _asset_entries(context):
+            by_file.setdefault(filepath, []).append(name)
+        if not by_file:
+            filepath, _ = self._get_source(context)
+            if not filepath:
+                self.report({'WARNING'}, "Cannot determine source file")
+                return {'CANCELLED'}
+            by_file[filepath] = [f.name for f in files if f.name]
 
-        names = list(dict.fromkeys(f.name for f in files if f.name))
-        objs, colls, reused, failed = _resolve_assets(filepath, names, link)
+        objs, colls, reused, failed = [], [], [], []
+        for filepath, names in by_file.items():
+            file_objs, file_colls, file_reused, file_failed = _resolve_assets(
+                filepath, list(dict.fromkeys(names)), link)
+            objs += file_objs.values()
+            colls += file_colls.values()
+            reused += file_reused
+            failed += file_failed
         if not objs and not colls:
             self.report({'WARNING'}, "Import failed: no assets could be loaded")
             return {'CANCELLED'}
 
         scatter_coll = _get_or_create_scatter_collection()
         collection = self._get_target_collection(scatter_coll, collection_name)
-        for obj in objs.values():
+        for obj in objs:
             _move_into(collection, obj=obj)
-        for coll in colls.values():
+        for coll in colls:
             _move_into(collection, coll=coll)
         _apply_as_instance(obj=None, coll=collection, as_collection=True)
 
@@ -617,11 +658,11 @@ class SCATTER_OT_import_selected(Operator):
 
     @staticmethod
     def _recommend_name(names):
-        """Recommend a collection name from a list of asset names."""
-        if len(names) < 2:
-            return ""
-        prefix = os.path.commonprefix(names).rstrip('_-. ')
-        return prefix if len(prefix) >= 3 else ""
+        """Recommend a collection name from a list of asset names, never empty."""
+        prefix = os.path.commonprefix(names).rstrip('_-. ') if len(names) > 1 else ""
+        if len(prefix) >= 3:
+            return prefix
+        return f"{names[0]}_group" if names else "scatter_group"
 
 #----PANELS----
 
