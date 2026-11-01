@@ -5,7 +5,7 @@ from bpy.types import Menu
 from ..operators.system_ops import SYSTEM_TYPE_ITEMS
 from ..properties import (
     BRUSH_ICON_NAMES, BRUSH_TYPE_ITEMS,
-    EFFECTOR_ICON_NAMES, EFFECTOR_TYPE_ITEMS, PROCEDURAL_ONLY_EFFECTORS,
+    EFFECTOR_ICON_NAMES, EFFECTOR_TYPE_ITEMS, PROCEDURAL_ONLY_EFFECTORS, ground_label,
 )
 from ..utils import geonodes as geonodes_utils
 from ..utils import icons as icon_utils
@@ -36,7 +36,7 @@ class SCATTER_MT_grounds(Menu):
         active_idx = context.scene.active_ground_index
         for index, ground in enumerate(context.scene.scatter_grounds):
             icon = 'RADIOBUT_ON' if index == active_idx else 'RADIOBUT_OFF'
-            op = layout.operator("scatter.set_active_ground", text=ground.name, icon=icon)
+            op = layout.operator("scatter.set_active_ground", text=ground_label(ground), icon=icon)
             op.index = index
 
 

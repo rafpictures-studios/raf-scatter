@@ -1,5 +1,6 @@
 """Manual painting session, brush selection, and brush pie keymap."""
 import bpy
+from bpy.app.handlers import persistent
 from bpy.props import EnumProperty
 from bpy.types import Operator
 
@@ -114,6 +115,7 @@ def _clear_paint_session(scene):
     scene.scatter_paint_curve_obj = None
 
 
+@persistent
 def _watch_paint_sessions(scene, depsgraph):
     """Close paint sessions whose curve left sculpt mode without the Stop button."""
     for scn in bpy.data.scenes:
@@ -292,6 +294,7 @@ def _leave_paint_curve_edit_mode():
     return None
 
 
+@persistent
 def _guard_paint_curve_edit_mode(scene, depsgraph):
     """Catch Edit Mode or a Sculpt Mode outside Start Painting on a paint curve, by any route."""
     if _blocked_paint_curves() and not bpy.app.timers.is_registered(

@@ -1,6 +1,7 @@
 """Main N-panel for RAF Scatter."""
 from bpy.types import Panel
 
+from ..properties import ground_label
 from ..utils import bake as bake_utils
 from ..utils import geonodes as geonodes_utils
 from ..utils import icons as icon_utils
@@ -99,7 +100,7 @@ class SCATTER_PT_main(Panel):
             return
         grounds = scene.scatter_grounds
         idx = scene.active_ground_index
-        active_name = grounds[idx].name if 0 <= idx < len(grounds) else ""
+        active_name = ground_label(grounds[idx]) if 0 <= idx < len(grounds) else ""
         row = layout.row(align=True)
         row.menu("SCATTER_MT_grounds", text=active_name, icon='OUTLINER_OB_MESH')
         row.operator("scatter.select_ground", text="", icon='RESTRICT_SELECT_OFF')

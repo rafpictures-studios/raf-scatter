@@ -60,6 +60,14 @@ BRUSH_ICON_NAMES = {
 
 #----MODULE STATE----
 _brush_enum_cache = []
+_RENAME_OWNER = object()
+
+
+#----NAMES----
+def ground_label(ground):
+    """Name of a ground as shown in the panel: its object's current name."""
+    target = ground.target_object
+    return target.name if target is not None else ground.name
 
 
 #----PICKER POLLS----
@@ -286,6 +294,30 @@ def _on_system_name_update(self, context):
         self.name = self.curve_obj.name
 
 
+def _on_object_renamed():
+    """An object was renamed in the Outliner or a name field: follow it in every scene."""
+    for scene in bpy.data.scenes:
+        _sync_object_names(scene)
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+
+
+def _subscribe_object_renames():
+    """Watch object renames; Blender drops the subscription when a file is opened."""
+    bpy.msgbus.clear_by_owner(_RENAME_OWNER)
+    bpy.msgbus.subscribe_rna(
+        key=(bpy.types.Object, "name"), owner=_RENAME_OWNER, args=(), notify=_on_object_renamed,
+    )
+
+
+@persistent
+def _resubscribe_after_load(_dummy):
+    """Watch object renames again in the opened file."""
+    _subscribe_object_renames()
+
+
 @persistent
 def _relink_node_groups_after_load(_dummy):
     """A file saved by another RAF Scatter install links its node_groups.blend; use this one.
@@ -302,8 +334,8 @@ def _color_open_file():
     return None
 
 
-def _sync_curve_renames(scene, depsgraph):
-    """Sync outside ground and curve renames and heal modifier socket keys."""
+def _sync_object_names(scene):
+    """Give grounds and systems the names of their objects after an outside rename."""
     for ground in scene.scatter_grounds:
         target = ground.target_object
         if target is not None and target.name != ground.name:
@@ -311,6 +343,14 @@ def _sync_curve_renames(scene, depsgraph):
         for system in ground.scatter_systems:
             if system.curve_obj is not None and system.curve_obj.name != system.name:
                 system.name = system.curve_obj.name
+
+
+@persistent
+def _sync_curve_renames(scene, depsgraph):
+    """Sync outside ground and curve renames and heal modifier socket keys."""
+    _sync_object_names(scene)
+    for ground in scene.scatter_grounds:
+        for system in ground.scatter_systems:
             geonodes_utils.resync_effector_modifier_links(system)
             geonodes_utils.ensure_system_modifier_defaults(system)
 
@@ -447,6 +487,8 @@ def register():
     )
     bpy.app.handlers.depsgraph_update_post.append(_sync_curve_renames)
     bpy.app.handlers.load_post.append(_relink_node_groups_after_load)
+    bpy.app.handlers.load_post.append(_resubscribe_after_load)
+    _subscribe_object_renames()
     bpy.app.timers.register(_color_open_file, first_interval=0.0)
 
 
@@ -454,6 +496,9 @@ def unregister():
     """Unregister property classes and remove scene properties."""
     if bpy.app.timers.is_registered(_color_open_file):
         bpy.app.timers.unregister(_color_open_file)
+    bpy.msgbus.clear_by_owner(_RENAME_OWNER)
+    if _resubscribe_after_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_resubscribe_after_load)
     if _relink_node_groups_after_load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_relink_node_groups_after_load)
     if _sync_curve_renames in bpy.app.handlers.depsgraph_update_post:

@@ -1,5 +1,6 @@
 """Operators for target ground management and the delete guard of ground objects."""
 import bpy
+from bpy.app.handlers import persistent
 from bpy.props import IntProperty
 from bpy.types import Operator
 
@@ -282,6 +283,7 @@ def _clean_deleted_grounds():
     return None
 
 
+@persistent
 def _watch_deleted_grounds(scene, depsgraph):
     """Catch ground meshes deleted by any route the delete guard does not see."""
     lost = any(g.target_object is None for s in bpy.data.scenes for g in s.scatter_grounds)
