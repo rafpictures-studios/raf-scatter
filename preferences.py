@@ -1,11 +1,13 @@
 """Addon preferences for RAF Scatter."""
 import sys
+import time
 
 import bpy
-from bpy.props import EnumProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, StringProperty
 from bpy.types import AddonPreferences
 
 from .utils import icons as icon_utils
+from .utils import updates as updates_utils
 
 
 BIOME_GROUP_LOCAL = 'LOCAL'
@@ -167,6 +169,35 @@ def _draw_installed_packs(layout, wm):
         op.pack_id = pack.name
 
 
+def _update_status_text():
+    state = updates_utils.state
+    status = state["status"]
+    if status == updates_utils.STATUS_CHECKING:
+        return "Checking…"
+    installed = updates_utils.installed_version_text()
+    if status == updates_utils.STATUS_ERROR:
+        return "Could not reach the website. Check your internet connection and try again."
+    if status == updates_utils.STATUS_IDLE:
+        return f"You have RAF Scatter {installed}."
+    checked = time.strftime("%d %b %Y %H:%M", time.localtime(state["checked"]))
+    if status == updates_utils.STATUS_AVAILABLE:
+        return f"RAF Scatter {state['version']} is available (you have {installed}). Checked {checked}."
+    return f"RAF Scatter {installed} is the latest version. Checked {checked}."
+
+
+def _draw_update_notice(layout):
+    state = updates_utils.state
+    if state["status"] != updates_utils.STATUS_AVAILABLE:
+        return
+    box = layout.box()
+    row = box.row()
+    row.label(text=f"RAF Scatter {state['version']} is available", icon='INFO')
+    row.operator("wm.url_open", text="Download", icon='URL').url = state["url"]
+    if state["message"]:
+        _draw_hint(box, state["message"])
+    _draw_hint(box, f"You have {updates_utils.installed_version_text()}.")
+
+
 #----PREFERENCES PANEL----
 class SCATTER_AP_preferences(AddonPreferences):
     bl_idname = __package__
@@ -175,6 +206,11 @@ class SCATTER_AP_preferences(AddonPreferences):
     pack_author: StringProperty(name="Pack Author", options={'HIDDEN'})
     biome_group: EnumProperty(
         name="Biome Group", items=_BIOME_GROUP_ITEMS, update=_on_biome_group_update,
+    )
+    check_updates: BoolProperty(
+        name="Check for Updates",
+        description="Once a day, ask the RAF Pictures website whether a newer RAF Scatter is available",
+        default=True,
     )
     default_library: EnumProperty(
         name="Default Library",
@@ -186,8 +222,10 @@ class SCATTER_AP_preferences(AddonPreferences):
 
     def draw(self, context):
         layout = self.layout
+        _draw_update_notice(layout)
         self._draw_scatter_library(layout)
         self._draw_biome_library(layout, context)
+        self._draw_updates(layout)
         self._draw_links(layout)
 
     def _draw_scatter_library(self, layout):
@@ -244,6 +282,19 @@ class SCATTER_AP_preferences(AddonPreferences):
         elif active is not None:
             _draw_biome_details(body, active)
         _draw_installed_packs(body, wm)
+
+    def _draw_updates(self, layout):
+        header, body = layout.panel("RAF_SCATTER_prefs_updates", default_closed=True)
+        header.label(text="Updates", icon='FILE_REFRESH')
+        if body is None:
+            return
+        row = body.row()
+        row.prop(self, "check_updates")
+        row.operator("scatter.check_updates", icon='FILE_REFRESH')
+        if not updates_utils.online_allowed():
+            _draw_hint(body, "Online access is off: turn on Allow Online Access in Preferences > System.")
+            return
+        _draw_hint(body, _update_status_text())
 
     def _draw_links(self, layout):
         header, body = layout.panel("RAF_SCATTER_prefs_links", default_closed=True)

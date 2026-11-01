@@ -10,6 +10,7 @@ from . import manual_ops
 from . import library_ops
 from . import biome_ops
 from . import pack_ops
+from . import update_ops
 
 _modules = (
     ground_ops,
@@ -22,6 +23,7 @@ _modules = (
     library_ops,
     biome_ops,
     pack_ops,
+    update_ops,
 )
 
 
